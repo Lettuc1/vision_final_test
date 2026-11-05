@@ -1,0 +1,12 @@
+# 忽略编译产生的文件
+build/
+devel/
+logs/
+*.log
+
+# 忽略 bag 文件和模型
+*.bag
+*.onnx
+
+# 忽略 IDE 的配置
+.vscode/
