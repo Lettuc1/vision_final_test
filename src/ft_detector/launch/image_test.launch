@@ -5,6 +5,4 @@
     
     <node pkg="rqt_image_view" type="rqt_image_view" name="rqt_image_view" args="/ft/debug/image" />
 
-    <node pkg="rosbag" type="play" name="player" output="screen" args="--clock /root/rosbags/blue_1.bag" />
-
 </launch>
