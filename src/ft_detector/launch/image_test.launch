@@ -1,8 +1,10 @@
 <launch>
-    <param name="/use_sim_time" value="true" />
+    <!-- Detection node + the two GUI tools used during development. -->
+    <include file="$(find ft_detector)/launch/detect.launch" />
 
-    <node pkg="ft_detector" type="image_receiver" name="image_receiver_node" output="screen" />
-    
-    <node pkg="rqt_image_view" type="rqt_image_view" name="rqt_image_view" args="/ft/debug/image" />
+    <node pkg="rqt_image_view" type="rqt_image_view" name="rqt_image_view"
+          args="/ft/debug/image" />
 
+    <!-- Online HSV / pairing tuning; values are written to the running node. -->
+    <node pkg="rqt_reconfigure" type="rqt_reconfigure" name="rqt_reconfigure" />
 </launch>

@@ -1,0 +1,125 @@
+# =============================================================================
+# Traditional armour detector parameters
+#
+# Loaded by launch/detect.launch into the private namespace of the
+# image_receiver node.  HSV/pairing values are also exposed through
+# dynamic_reconfigure (rqt_reconfigure) and are pushed into the server at
+# start-up, so editing this file and relaunching is enough.
+#
+# Tune the detector in this order:
+#   1. red_* / blue_* HSV windows  -> clean, solid light bars in /ft/debug/mask
+#   2. min_bar_p90_v / min_white_ratio / min_sat_ratio -> remove floor glare
+#   3. pairing limits -> reject asymmetric reflections
+# =============================================================================
+
+# ------------------------------- topics ------------------------------------
+image_topic: /hk_camera/image_raw          # image_transport appends /compressed
+camera_info_topic: /hk_camera/camera_info
+image_transport: compressed
+queue_size: 2
+
+detection_topic: /ft/detection
+debug_image_topic: /ft/debug/image
+debug_mask_topic: /ft/debug/mask
+publish_mask: true
+publish_tf: true
+
+# ------------------------------ camera fallback ----------------------------
+# camera_info is the primary source.  These values are only used if the bag
+# does not contain camera_info at all (or before the first camera_info msg).
+camera_frame_fallback: camera_optical_frame
+fallback_fx: 1000.0
+fallback_fy: 1000.0
+fallback_cx: 720.0
+fallback_cy: 540.0
+fallback_distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+
+# ------------------------------- red HSV -----------------------------------
+red_h_min1: 0
+red_h_max1: 20
+red_h_min2: 160
+red_h_max2: 180
+red_s_min: 100
+red_s_max: 255
+red_v_min: 130
+red_v_max: 255
+
+# ------------------------------- blue HSV ----------------------------------
+blue_h_min: 90
+blue_h_max: 140
+blue_s_min: 100
+blue_s_max: 255
+blue_v_min: 130
+blue_v_max: 255
+
+# --------------------------- over-exposed LED core -------------------------
+# The centre of a close/strong LED clips to white.  A strict colour threshold
+# therefore produces a hollow ring.  Pixels satisfying this "white" range are
+# added back only if they are within white_dilate px of coloured pixels, then
+# holes are filled.  This is the main fix for the hollow-lightbar symptom.
+white_s_max: 110
+white_v_min: 215
+white_dilate: 5
+
+# --------------------------- light-bar geometry ----------------------------
+min_contour_area: 40
+min_bar_length: 8.0
+min_bar_width: 2.0
+min_bar_ratio: 1.2
+max_bar_ratio: 12.0
+max_bar_tilt: 40.0
+
+# A real LED bar is extremely bright.  Diffuse floor reflections are usually
+# 1-2 stops darker even when they have the same hue, so this is the main
+# reflection rejector.  For red bars the over-exposed white core is present;
+# for blue bars the saturated-blue core is present, hence the OR below.
+min_bar_p90_v: 225
+min_bar_mean_v: 70.0
+min_white_ratio: 0.02
+min_sat_ratio: 0.30
+sat_s_min: 150
+sat_v_min: 150
+
+# ------------------------------- pairing -----------------------------------
+max_pair_distance: 1100
+max_pair_angle: 18.0
+max_pair_tilt: 20.0
+max_endpoint_diff_ratio: 0.30
+max_length_ratio_diff: 0.35
+min_width_ratio: 0.55
+min_pair_gap_factor: 0.60
+
+# The region between two real bars is the dark armour plate, not the floor.
+max_inner_mean_v: 170.0
+max_inner_colored_ratio: 0.15
+
+# --------------------------- physical dimensions ---------------------------
+# Definition 1 from the assignment: the four points are the endpoints of the
+# two light bars.  W is the distance between light-bar centres; L is the bar
+# length.  Values are millimetres, converted to metres before PnP.
+armor_small_width: 120.0
+armor_large_width: 235.0
+lightbar_length: 55.0
+# Accepted gap/bar-length ratio is W/L * (1 +/- armor_width_tolerance).
+armor_width_tolerance: 0.65
+
+# ------------------------------ PnP checks ---------------------------------
+max_reproj_error: 20.0
+min_depth: 0.10
+max_depth: 50.0
+
+# --------------------------- number evidence -------------------------------
+# The big armour number is a compact, bright, achromatic blob between the
+# bars.  It is found by a black-hat / top-hat response, which is robust to the
+# very dark plates in these bags.  This is a *score*, not a hard gate, so a
+# dark/occluded number does not stop detection.
+number_tophat_kernel: 31
+number_extend: 0.85
+number_inset: 0.05
+number_s_max: 170
+number_thr_percentile: 70
+number_min_area_ratio: 0.002
+number_max_area_ratio: 0.45
+
+# --------------------------- dynamic reconfigure ---------------------------
+use_dynamic_reconfigure: true

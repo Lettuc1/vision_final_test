@@ -1,0 +1,10 @@
+<launch>
+    <!-- Replay bags with: rosbag play with clock and loop -->
+    <param name="/use_sim_time" value="true" />
+
+    <node pkg="ft_detector" type="image_receiver" name="image_receiver_node" output="screen">
+        <!-- All detector parameters live in YAML.  Path is found through the
+             package, never hard-coded. -->
+        <rosparam file="$(find ft_detector)/config/armor_params.yaml" command="load" />
+    </node>
+</launch>
