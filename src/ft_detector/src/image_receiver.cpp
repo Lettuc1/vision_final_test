@@ -159,7 +159,14 @@ struct Params {
     double armor_small_width    = 120.0;  // mm, light-bar centre distance
     double armor_large_width    = 235.0;  // mm
     double lightbar_length      = 55.0;   // mm
-    double armor_width_tolerance = 0.65;  // relative gap/length tolerance
+    double armor_width_tolerance = 0.65;       // small armour lower factor
+    double armor_width_upper_tolerance = 0.30; // small armour upper factor
+    double armor_large_gap_lower_factor = 0.85; // large armour lower factor
+    double armor_large_gap_upper_factor = 1.10; // large armour upper factor
+    double max_large_box_aspect = 4.70;         // width / mean bar height
+    double wide_large_aspect_min = 4.00;        // require number evidence above this
+    double min_number_score_wide_large = 0.08;
+    double min_number_score_large = 0.05;
 
     // PnP sanity
     double max_reproj_error = 20.0;  // px RMSE
@@ -268,6 +275,20 @@ Params loadParams(ros::NodeHandle& pnh) {
     p.armor_large_width     = readParam<double>(pnh, "armor_large_width", p.armor_large_width);
     p.lightbar_length       = readParam<double>(pnh, "lightbar_length", p.lightbar_length);
     p.armor_width_tolerance = readParam<double>(pnh, "armor_width_tolerance", p.armor_width_tolerance);
+    p.armor_width_upper_tolerance = readParam<double>(
+        pnh, "armor_width_upper_tolerance", p.armor_width_upper_tolerance);
+    p.armor_large_gap_lower_factor = readParam<double>(
+        pnh, "armor_large_gap_lower_factor", p.armor_large_gap_lower_factor);
+    p.armor_large_gap_upper_factor = readParam<double>(
+        pnh, "armor_large_gap_upper_factor", p.armor_large_gap_upper_factor);
+    p.max_large_box_aspect = readParam<double>(
+        pnh, "max_large_box_aspect", p.max_large_box_aspect);
+    p.wide_large_aspect_min = readParam<double>(
+        pnh, "wide_large_aspect_min", p.wide_large_aspect_min);
+    p.min_number_score_wide_large = readParam<double>(
+        pnh, "min_number_score_wide_large", p.min_number_score_wide_large);
+    p.min_number_score_large = readParam<double>(
+        pnh, "min_number_score_large", p.min_number_score_large);
 
     p.max_reproj_error = readParam<double>(pnh, "max_reproj_error", p.max_reproj_error);
     p.min_depth        = readParam<double>(pnh, "min_depth", p.min_depth);
@@ -745,11 +766,23 @@ bool buildPairGeometry(const LightBar& left, const LightBar& right,
     const double small_exp = p.armor_small_width / p.lightbar_length;
     const double large_exp = p.armor_large_width / p.lightbar_length;
     const double gap_ratio = gap / mean_len;
-    const double tol = p.armor_width_tolerance;
-    const bool small_ok = gap_ratio >= small_exp * (1.0 - tol) &&
-                          gap_ratio <= small_exp * (1.0 + tol);
-    const bool large_ok = gap_ratio >= large_exp * (1.0 - tol) &&
-                          gap_ratio <= large_exp * (1.0 + tol);
+
+    // The upper bound must be much tighter than the lower bound.  Projecting a
+    // plate with yaw only makes the gap *smaller*; a gap much wider than W/L is
+    // therefore not a real plate, it is two bars from different plates (the
+    // blue_guard wide-box case, gap/bar-length ≈ 6.8).  Short/partially
+    // detected bars can make the ratio slightly larger, but not 1.6x.
+    const bool small_ok =
+        gap_ratio >= small_exp * p.armor_width_tolerance &&
+        gap_ratio <= small_exp * (1.0 + p.armor_width_upper_tolerance);
+    // Large armour uses its own, tighter band.  In red_1&3, a side bar of the
+    // left robot joined to the adjacent front bar gives ratio ≈3.2 (too small
+    // for a large plate), while a left side bar joined to the right vehicle's
+    // side bar gives ratio ≈5.0 (too large).  Both are rejected here, leaving
+    // a gap between the small and large bands intentionally.
+    const bool large_ok =
+        gap_ratio >= large_exp * p.armor_large_gap_lower_factor &&
+        gap_ratio <= large_exp * p.armor_large_gap_upper_factor;
     if (!small_ok && !large_ok) return false;
 
     const double err_small = std::fabs(gap_ratio - small_exp) / small_exp;
@@ -1005,6 +1038,33 @@ std::vector<PairCandidate> findPairCandidates(
 
             if (inner_mean > p.max_inner_mean_v) continue;
             if (colored_ratio > p.max_inner_colored_ratio) continue;
+
+            if (pc.is_large) {
+                // A real large plate always has a big number; a cross pair
+                // between two plates/vehicles usually has empty background in
+                // its interior and a near-zero number score.  Keep the gate
+                // low enough for a dark but visible number, high enough for
+                // empty background.
+                if (number_score < p.min_number_score_large) continue;
+                // Use the actual projected quadrilateral aspect, not only the
+                // bar-centre distance: a pair made from the two facing side
+                // bars of two different vehicles has aspect ≈4.8-5.0 while the
+                // real large plate is ≈4.5.  A large plate with this width must
+                // also contain the big armour number; otherwise it is two
+                // unrelated bars with empty background between them.
+                const cv::Point2f lt = left->center - left->axis * (left->length * 0.5f);
+                const cv::Point2f lb = left->center + left->axis * (left->length * 0.5f);
+                const cv::Point2f rt = right->center - right->axis * (right->length * 0.5f);
+                const cv::Point2f rb = right->center + right->axis * (right->length * 0.5f);
+                const double edge_w = 0.5 * (pointDistance(lt, rt) + pointDistance(lb, rb));
+                const double edge_h = 0.5 * (pointDistance(lt, lb) + pointDistance(rt, rb));
+                const double box_aspect = edge_w / std::max(1.0, edge_h);
+                if (box_aspect > p.max_large_box_aspect) continue;
+                if (box_aspect > p.wide_large_aspect_min &&
+                    number_score < p.min_number_score_wide_large) {
+                    continue;
+                }
+            }
 
             pc.number_score = number_score;
             pc.inner_mean_v = inner_mean;
@@ -1439,6 +1499,13 @@ private:
         params_.max_length_ratio_diff   = cfg.max_length_ratio_diff;
         params_.min_width_ratio         = cfg.min_width_ratio;
         params_.armor_width_tolerance   = cfg.armor_width_tolerance;
+        params_.armor_width_upper_tolerance = cfg.armor_width_upper_tolerance;
+        params_.armor_large_gap_lower_factor = cfg.armor_large_gap_lower_factor;
+        params_.armor_large_gap_upper_factor = cfg.armor_large_gap_upper_factor;
+        params_.max_large_box_aspect = cfg.max_large_box_aspect;
+        params_.wide_large_aspect_min = cfg.wide_large_aspect_min;
+        params_.min_number_score_wide_large = cfg.min_number_score_wide_large;
+        params_.min_number_score_large = cfg.min_number_score_large;
 
         params_.max_inner_mean_v        = cfg.max_inner_mean_v;
         params_.max_inner_colored_ratio = cfg.max_inner_colored_ratio;
@@ -1492,6 +1559,13 @@ private:
             cfg.max_length_ratio_diff   = params_.max_length_ratio_diff;
             cfg.min_width_ratio         = params_.min_width_ratio;
             cfg.armor_width_tolerance   = params_.armor_width_tolerance;
+            cfg.armor_width_upper_tolerance = params_.armor_width_upper_tolerance;
+            cfg.armor_large_gap_lower_factor = params_.armor_large_gap_lower_factor;
+            cfg.armor_large_gap_upper_factor = params_.armor_large_gap_upper_factor;
+            cfg.max_large_box_aspect = params_.max_large_box_aspect;
+            cfg.wide_large_aspect_min = params_.wide_large_aspect_min;
+            cfg.min_number_score_wide_large = params_.min_number_score_wide_large;
+            cfg.min_number_score_large = params_.min_number_score_large;
 
             cfg.max_inner_mean_v        = params_.max_inner_mean_v;
             cfg.max_inner_colored_ratio = params_.max_inner_colored_ratio;

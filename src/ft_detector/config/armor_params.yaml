@@ -120,8 +120,30 @@ max_inner_colored_ratio: 0.15
 armor_small_width: 120.0
 armor_large_width: 235.0
 lightbar_length: 55.0
-# Accepted gap/bar-length ratio is W/L * (1 +/- armor_width_tolerance).
+# 允许的灯条间距/灯条长度比值：
+#   下限 = W/L * armor_width_tolerance
+#   上限 = W/L * (1 + armor_width_upper_tolerance)
+# 只放宽下限，上限必须收紧：两根灯条隔得很远时，比值会接近/超过 W/L 的
+# 1.3 倍，这不是透视造成的，而是两根不同装甲板的灯条被硬凑在一起。
+# 小装甲板间距/长度比范围：W/L * [0.65, 1.30]
 armor_width_tolerance: 0.65
+armor_width_upper_tolerance: 0.30
+# 大装甲板使用更紧的独立范围：W/L * [0.85, 1.10]。
+# red_1&3 中“左侧板 + 前左灯条”的跨板比值约 3.2，低于 0.85*4.27≈3.63；
+# “左车侧灯条 + 右车侧灯条”的跨车比值约 5.0，高于 1.10*4.27≈4.70。
+# 这两类硬凑配对都会被拒绝；小/大之间刻意留出间隔，宁可漏检。
+armor_large_gap_lower_factor: 0.85
+armor_large_gap_upper_factor: 1.10
+# 大装甲板框的宽/高比上限。red_1&3 中“左车右侧灯条 + 右车左侧灯条”的
+# 跨车框约 4.8~5.0；真实左侧大装甲板约 4.5，因此上限取 4.70。
+max_large_box_aspect: 4.70
+# 对这种很宽的大装甲板，必须能在大数字区域找到足够证据；empty 背景
+# 的跨车配对会被拒绝。宁可漏检。
+wide_large_aspect_min: 4.00
+min_number_score_wide_large: 0.08
+# 所有大装甲板都必须有一点大数字证据；跨板块/跨车块的内部通常是空背景，
+# 数字分数接近 0。默认 0.05，宁可漏掉很暗的大装甲板。
+min_number_score_large: 0.05
 
 # ------------------------------ PnP checks ---------------------------------
 max_reproj_error: 20.0

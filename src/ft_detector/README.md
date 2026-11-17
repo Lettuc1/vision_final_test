@@ -106,7 +106,18 @@ roslaunch ft_detector image_test.launch
 4. **大 / 小装甲板判断**
    - 不再用固定的像素距离 `distance > 80`；
    - 使用 `灯条中心距 / 平均灯条长度` 与真实 `W / L` 的比值判断，远近都能用；
-   - 允许 `armor_width_tolerance` 的相对误差，再按误差最小的一类归类。
+   - 小装甲板允许 `W/L × [0.65, 1.30]`，大装甲板使用更紧的独立范围
+     `W/L × [0.85, 1.10]`，中间刻意留出间隔，再按误差最小的一类归类；
+   - 上限必须收紧：透视/偏航只会让灯条间距**变小**，不会让间距/灯条长度比
+     大幅变大。`blue_guard.bag` 中两根相距很远灯条的比值约为 6.8，直接拒绝；
+     `red_1&3.bag` 中“左侧板 + 前左灯条”的跨板比值约为 3.2，低于大装甲板
+     下限；“左车侧灯条 + 右车侧灯条”的跨车比值约为 5.0，高于大装甲板上限。
+   - 对大装甲板还检查投影框的宽/高比：`max_large_box_aspect` 默认 4.70。
+     跨车框约为 4.8~5.0，会被拒绝；宽高比超过 `wide_large_aspect_min`
+     （默认 4.00）时，还要求大数字区域有足够证据
+     `min_number_score_wide_large`（默认 0.08），否则也丢弃；
+     对所有大装甲板还要求 `min_number_score_large`（默认 0.05），
+     跨板块/跨车板的空背景内部数字分数接近 0，会被拒绝。
 
 ## 参数和动态调参
 
@@ -135,8 +146,17 @@ launch”和“拖滑块”两种方式都有效，并且以 YAML 为初始值�
    （默认 0.20）、`max_length_ratio_diff`（默认 0.20）、
    `pair_centrality_weight`、`pair_centrality_y_band` 和
    `max_armor_overlap_ratio`；
-5. 大 / 小装甲板：调整 `armor_small_width`、`armor_large_width`、
-   `lightbar_length`，`armor_width_tolerance` 一般保持 0.6 左右。
+5. 如果出现“两根灯条隔得很远”的超宽框，检查
+   `armor_width_upper_tolerance`（默认 0.30）、
+   `armor_large_gap_lower_factor`（默认 0.85）、
+   `armor_large_gap_upper_factor`（默认 1.10）、
+   `max_large_box_aspect`（默认 4.70）、
+   `min_number_score_large`（默认 0.05）；不要为了多检出而放大这些值，
+   宁可漏检；
+6. 大 / 小装甲板：调整 `armor_small_width`、`armor_large_width`、
+   `lightbar_length`，`armor_width_tolerance` 一般保持 0.65 左右，
+   `armor_width_upper_tolerance` 保持 0.30 左右；
+   `armor_large_gap_upper_factor` 保持 1.10 左右。
 
 ## 调试图
 
