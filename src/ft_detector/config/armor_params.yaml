@@ -1,15 +1,14 @@
 # =============================================================================
-# Traditional armour detector parameters
+# 传统装甲板检测参数
 #
-# Loaded by launch/detect.launch into the private namespace of the
-# image_receiver node.  HSV/pairing values are also exposed through
-# dynamic_reconfigure (rqt_reconfigure) and are pushed into the server at
-# start-up, so editing this file and relaunching is enough.
+# 由 launch/detect.launch 加载到 image_receiver 节点的私有命名空间。HSV 和
+# 配对参数同时暴露给 dynamic_reconfigure（rqt_reconfigure），节点启动时会把
+# 本文件的值推送到动态参数服务器，所以“改 YAML 后重新 launch”即可生效。
 #
-# Tune the detector in this order:
-#   1. red_* / blue_* HSV windows  -> clean, solid light bars in /ft/debug/mask
-#   2. min_bar_p90_v / min_white_ratio / min_sat_ratio -> remove floor glare
-#   3. pairing limits -> reject asymmetric reflections
+# 建议按以下顺序调参：
+#   1. 调红/蓝 HSV：让 /ft/debug/mask 里的灯条干净、实心
+#   2. 调 min_bar_p90_v / min_white_ratio / min_sat_ratio：去掉地胶反光
+#   3. 调配对上限：拒绝不对称的反光配对
 # =============================================================================
 
 # ------------------------------- topics ------------------------------------
@@ -25,8 +24,8 @@ publish_mask: true
 publish_tf: true
 
 # ------------------------------ camera fallback ----------------------------
-# camera_info is the primary source.  These values are only used if the bag
-# does not contain camera_info at all (or before the first camera_info msg).
+# 首选 camera_info。只有在整段 Bag 没有 camera_info，或者第一帧 camera_info
+# 还没到达时，才使用下面的兜底内参。
 camera_frame_fallback: camera_optical_frame
 fallback_fx: 1000.0
 fallback_fy: 1000.0
@@ -53,10 +52,9 @@ blue_v_min: 130
 blue_v_max: 255
 
 # --------------------------- over-exposed LED core -------------------------
-# The centre of a close/strong LED clips to white.  A strict colour threshold
-# therefore produces a hollow ring.  Pixels satisfying this "white" range are
-# added back only if they are within white_dilate px of coloured pixels, then
-# holes are filled.  This is the main fix for the hollow-lightbar symptom.
+# 近距离或强光 LED 中心会过曝成白色，严格颜色阈值会得到空心环。满足这个
+# “白色”范围的像素，只有距离彩色像素不超过 white_dilate 像素时才补回 mask，
+# 再填补外轮廓内部的洞。这是修复“灯条过曝空心”的关键。
 white_s_max: 110
 white_v_min: 215
 white_dilate: 5
@@ -69,10 +67,8 @@ min_bar_ratio: 1.2
 max_bar_ratio: 12.0
 max_bar_tilt: 40.0
 
-# A real LED bar is extremely bright.  Diffuse floor reflections are usually
-# 1-2 stops darker even when they have the same hue, so this is the main
-# reflection rejector.  For red bars the over-exposed white core is present;
-# for blue bars the saturated-blue core is present, hence the OR below.
+# 真灯条非常亮，地胶漫反射即使色相相近，通常也暗 1~2 档，这是过滤反光的
+# 主要依据。红色灯条有“过曝白心”，蓝色灯条有“高饱和蓝心”，所以下面用或关系。
 min_bar_p90_v: 225
 min_bar_mean_v: 70.0
 min_white_ratio: 0.02
@@ -82,21 +78,45 @@ sat_v_min: 150
 
 # ------------------------------- pairing -----------------------------------
 max_pair_distance: 1100
-max_pair_angle: 18.0
-max_pair_tilt: 20.0
-max_endpoint_diff_ratio: 0.30
-max_length_ratio_diff: 0.35
+max_pair_angle: 30.0
+# 配对中心线的最大倾角。真前装甲板在 red_4 中基本水平（<5°），
+# 相邻装甲板“左前 + 右侧”的跨板配对会达到 15° 以上，必须拒绝。
+max_pair_tilt: 12.0
+# 两根灯条中心的高度差 / 平均灯条长度；跨板错配通常 >1.0。
+max_pair_center_dy_ratio: 0.35
+# 端点高度差和灯条长度差都要严格：半截灯条/被遮挡灯条宁可漏检，也不能硬凑。
+max_endpoint_diff_ratio: 0.20
+max_length_ratio_diff: 0.20
 min_width_ratio: 0.55
 min_pair_gap_factor: 0.60
 
-# The region between two real bars is the dark armour plate, not the floor.
+# 同一根物理灯条可能被过曝白心切成两个连通域。下面三个参数用于合并这种
+# 碎片，避免同一根灯条被两个装甲板重复使用，从而把相邻装甲板连起来。
+bar_merge_center_factor: 1.5   # 中心距 < 1.5 × 最大灯条宽度 -> 同一根
+bar_merge_length_factor: 0.30  # 或中心距 < 0.30 × 较短灯条长度 -> 同一根
+bar_merge_overlap: 0.35        # 或包围框重叠 / 较小面积 > 0.35 -> 同一根
+
+# 两个检测框重叠比例超过该值时只保留分数高的一个。
+max_armor_overlap_ratio: 0.35
+
+# 中央先验：真实前装甲板通常夹在左右侧装甲板/侧灯条之间，左右两侧
+# 到最近同色灯条的距离接近；用这个“居中程度”给配对加分，可以优先
+# 选出中间的真实装甲板，而不是“左前+右侧”“右前+左侧”的跨板配对。
+pair_centrality_weight: 2.0
+pair_centrality_y_band: 2.0
+
+# 地胶/地板反光会出现在真实装甲板正下方的镜像位置，x 位置和宽度接近。
+# 打开后，若下方检测与上方检测的水平位置/宽度接近，就丢弃下方那个。
+reject_floor_reflection: true
+reflection_min_vertical_factor: 0.60
+
+# 真实装甲板两灯条之间是暗色板面，不是亮地胶。
 max_inner_mean_v: 170.0
 max_inner_colored_ratio: 0.15
 
 # --------------------------- physical dimensions ---------------------------
-# Definition 1 from the assignment: the four points are the endpoints of the
-# two light bars.  W is the distance between light-bar centres; L is the bar
-# length.  Values are millimetres, converted to metres before PnP.
+# 采用考核中的定义一：四个点是两根灯条的端点。W 是灯条中心距，L 是灯条
+# 长度，单位毫米，传入 PnP 前换算成米。
 armor_small_width: 120.0
 armor_large_width: 235.0
 lightbar_length: 55.0

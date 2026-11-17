@@ -133,12 +133,23 @@ struct Params {
 
     // pairing
     int    max_pair_distance          = 1100;
-    double max_pair_angle             = 18.0;  // deg between bar axes
-    double max_pair_tilt              = 20.0;  // deg of centre line
-    double max_endpoint_diff_ratio    = 0.30;
-    double max_length_ratio_diff      = 0.35;
+    double max_pair_angle             = 30.0;  // deg between bar axes (perspective)
+    double max_pair_tilt              = 12.0;  // deg of centre line
+    double max_pair_center_dy_ratio   = 0.35;  // |dy| / mean bar length
+    double max_endpoint_diff_ratio    = 0.20;
+    double max_length_ratio_diff      = 0.20;
     double min_width_ratio            = 0.55;
     double min_pair_gap_factor        = 0.60;
+    // Fragments of one physical light bar can be split into two components by
+    // an over-exposed white core.  These thresholds merge such duplicates.
+    double bar_merge_center_factor    = 1.5;
+    double bar_merge_length_factor    = 0.30;
+    double bar_merge_overlap          = 0.35;
+    double max_armor_overlap_ratio    = 0.35;
+    double pair_centrality_weight     = 2.0;
+    double pair_centrality_y_band     = 2.0;
+    bool   reject_floor_reflection     = true;
+    double reflection_min_vertical_factor = 0.60;
 
     // plate interior
     double max_inner_mean_v          = 170.0;
@@ -235,10 +246,20 @@ Params loadParams(ros::NodeHandle& pnh) {
     p.max_pair_distance       = readParam<int>(pnh, "max_pair_distance", p.max_pair_distance);
     p.max_pair_angle          = readParam<double>(pnh, "max_pair_angle", p.max_pair_angle);
     p.max_pair_tilt           = readParam<double>(pnh, "max_pair_tilt", p.max_pair_tilt);
+    p.max_pair_center_dy_ratio = readParam<double>(pnh, "max_pair_center_dy_ratio", p.max_pair_center_dy_ratio);
     p.max_endpoint_diff_ratio = readParam<double>(pnh, "max_endpoint_diff_ratio", p.max_endpoint_diff_ratio);
     p.max_length_ratio_diff   = readParam<double>(pnh, "max_length_ratio_diff", p.max_length_ratio_diff);
     p.min_width_ratio         = readParam<double>(pnh, "min_width_ratio", p.min_width_ratio);
     p.min_pair_gap_factor     = readParam<double>(pnh, "min_pair_gap_factor", p.min_pair_gap_factor);
+    p.bar_merge_center_factor = readParam<double>(pnh, "bar_merge_center_factor", p.bar_merge_center_factor);
+    p.bar_merge_length_factor = readParam<double>(pnh, "bar_merge_length_factor", p.bar_merge_length_factor);
+    p.bar_merge_overlap       = readParam<double>(pnh, "bar_merge_overlap", p.bar_merge_overlap);
+    p.max_armor_overlap_ratio = readParam<double>(pnh, "max_armor_overlap_ratio", p.max_armor_overlap_ratio);
+    p.pair_centrality_weight = readParam<double>(pnh, "pair_centrality_weight", p.pair_centrality_weight);
+    p.pair_centrality_y_band = readParam<double>(pnh, "pair_centrality_y_band", p.pair_centrality_y_band);
+    p.reject_floor_reflection = readParam<bool>(pnh, "reject_floor_reflection", p.reject_floor_reflection);
+    p.reflection_min_vertical_factor = readParam<double>(
+        pnh, "reflection_min_vertical_factor", p.reflection_min_vertical_factor);
 
     p.max_inner_mean_v        = readParam<double>(pnh, "max_inner_mean_v", p.max_inner_mean_v);
     p.max_inner_colored_ratio = readParam<double>(pnh, "max_inner_colored_ratio", p.max_inner_colored_ratio);
@@ -331,6 +352,7 @@ struct PairCandidate {
     double ratio_error = 0.0;
 
     double number_score = 0.0;
+    double centrality = 0.5;
     double inner_mean_v = 0.0;
     double colored_ratio = 0.0;
     double score = 0.0;
@@ -543,6 +565,66 @@ void extractBars(const cv::Mat& hsv, const cv::Mat& mask, bool is_red,
 }
 
 // =============================================================================
+// Light-bar duplicate / fragment handling
+// =============================================================================
+bool samePhysicalBar(const LightBar& a, const LightBar& b, const Params& p) {
+    if (a.is_red != b.is_red) return false;
+
+    const double d = pointDistance(a.center, b.center);
+    const double max_w = std::max(static_cast<double>(a.width),
+                                  static_cast<double>(b.width));
+    const double min_l = std::min(static_cast<double>(a.length),
+                                  static_cast<double>(b.length));
+    if (d < p.bar_merge_center_factor * max_w) return true;
+    if (d < p.bar_merge_length_factor * min_l) return true;
+
+    // Overlap coefficient (intersection / smaller area) is better than IoU
+    // here: one fragment can be much smaller than the full bar.
+    const cv::Rect ra = a.rect.boundingRect();
+    const cv::Rect rb = b.rect.boundingRect();
+    const cv::Rect inter = ra & rb;
+    if (inter.width > 0 && inter.height > 0) {
+        const double inter_area = static_cast<double>(inter.width) * inter.height;
+        const double small_area = static_cast<double>(
+            std::min(ra.width * ra.height, rb.width * rb.height));
+        if (small_area > 0.0 && inter_area / small_area > p.bar_merge_overlap) {
+            return true;
+        }
+    }
+    return false;
+}
+
+std::vector<LightBar> mergeDuplicateBars(const std::vector<LightBar>& bars,
+                                         const Params& p) {
+    std::vector<bool> removed(bars.size(), false);
+    auto better = [](const LightBar& a, const LightBar& b) {
+        if (a.area != b.area) return a.area > b.area;
+        if (std::fabs(a.length - b.length) > 1.0f) return a.length > b.length;
+        return a.p90_v > b.p90_v;
+    };
+
+    for (size_t i = 0; i < bars.size(); ++i) {
+        if (removed[i]) continue;
+        for (size_t j = i + 1; j < bars.size(); ++j) {
+            if (removed[j]) continue;
+            if (!samePhysicalBar(bars[i], bars[j], p)) continue;
+            if (better(bars[j], bars[i])) {
+                removed[i] = true;
+                break;  // bars[i] is the weaker fragment; move on
+            }
+            removed[j] = true;
+        }
+    }
+
+    std::vector<LightBar> merged;
+    merged.reserve(bars.size());
+    for (size_t i = 0; i < bars.size(); ++i) {
+        if (!removed[i]) merged.push_back(bars[i]);
+    }
+    return merged;
+}
+
+// =============================================================================
 // Pair geometry
 // =============================================================================
 bool buildPairGeometry(const LightBar& left, const LightBar& right,
@@ -632,13 +714,27 @@ bool buildPairGeometry(const LightBar& left, const LightBar& right,
 
     g.top_diff = std::fabs(g.top_left - g.top_right);
     g.bottom_diff = std::fabs(g.bottom_left - g.bottom_right);
+
+    // Do NOT allow an arbitrary vertical offset.  In red_4 the side plate and
+    // the front plate have similar-looking bars; joining the right bar of one
+    // plate to the left bar of the other produces a visibly tilted "armour"
+    // with the two bars at clearly different heights.  All real front plates
+    // in these bags have their two bars at almost the same image height.
     if (g.top_diff > p.max_endpoint_diff_ratio * g.mean_len ||
         g.bottom_diff > p.max_endpoint_diff_ratio * g.mean_len) {
         return false;
     }
+    // Extra rigidity check for perspective: the top and bottom offsets must
+    // also agree with each other.
+    if (std::fabs(g.top_diff - g.bottom_diff) >
+        p.max_endpoint_diff_ratio * g.mean_len) {
+        return false;
+    }
 
-    // The two bar centres should be at roughly the same height, not one bar on
-    // the floor reflection and one on the robot.
+    const double center_dy_ratio =
+        std::fabs(static_cast<double>(delta.y)) / mean_len;
+    if (center_dy_ratio > p.max_pair_center_dy_ratio) return false;
+
     g.pair_tilt = std::atan2(std::fabs(static_cast<double>(delta.y)),
                              std::fabs(static_cast<double>(delta.x))) *
                   180.0 / kPi;
@@ -816,6 +912,50 @@ void computeRegionEvidence(const cv::Mat& hsv, const cv::Mat& s_channel,
 // =============================================================================
 // Pair search / scoring / NMS
 // =============================================================================
+double pairCentrality(const PairCandidate& pc, const std::vector<LightBar>& bars,
+                     const Params& p) {
+    const LightBar& l = bars[pc.left];
+    const LightBar& r = bars[pc.right];
+    const double y_center = 0.5 * (static_cast<double>(l.center.y) + r.center.y);
+    const double band = p.pair_centrality_y_band * pc.mean_len;
+
+    bool has_left = false;
+    bool has_right = false;
+    double nearest_left = -1.0e9;
+    double nearest_right = 1.0e9;
+    for (size_t k = 0; k < bars.size(); ++k) {
+        if (static_cast<int>(k) == pc.left || static_cast<int>(k) == pc.right) continue;
+        const LightBar& b = bars[k];
+        if (b.is_red != l.is_red) continue;
+        if (std::fabs(static_cast<double>(b.center.y) - y_center) > band) continue;
+        if (b.center.x < l.center.x) {
+            if (static_cast<double>(b.center.x) > nearest_left) {
+                nearest_left = b.center.x;
+                has_left = true;
+            }
+        } else if (b.center.x > r.center.x) {
+            if (static_cast<double>(b.center.x) < nearest_right) {
+                nearest_right = b.center.x;
+                has_right = true;
+            }
+        }
+    }
+
+    // A plate between two neighbouring plates is the central pair: the free
+    // gap on its left and right is almost the same.  This prefers the true
+    // front plate over a pair made from one front bar and one side bar.
+    if (has_left && has_right) {
+        const double gl = static_cast<double>(l.center.x) - nearest_left;
+        const double gr = nearest_right - static_cast<double>(r.center.x);
+        if (gl + gr > 1.0) {
+            return clampd(1.0 - std::fabs(gl - gr) / (gl + gr), 0.0, 1.0);
+        }
+        return 0.5;
+    }
+    if (has_left || has_right) return 0.25;
+    return 0.5;
+}
+
 std::vector<PairCandidate> findPairCandidates(
         const cv::Mat& hsv, const cv::Mat& s_channel, const cv::Mat& v_channel,
         const cv::Mat& top_hat, const std::vector<LightBar>& bars,
@@ -869,6 +1009,7 @@ std::vector<PairCandidate> findPairCandidates(
             pc.number_score = number_score;
             pc.inner_mean_v = inner_mean;
             pc.colored_ratio = colored_ratio;
+            pc.centrality = pairCentrality(pc, bars, p);
 
             const double endpoint_mismatch =
                 static_cast<double>(std::max(pc.geom.top_diff, pc.geom.bottom_diff));
@@ -882,6 +1023,7 @@ std::vector<PairCandidate> findPairCandidates(
                        0.5 * sym +
                        0.4 * barq +
                        1.5 * pc.number_score +
+                       p.pair_centrality_weight * pc.centrality +
                        0.1 * dark;
             out.push_back(pc);
         }
@@ -889,20 +1031,95 @@ std::vector<PairCandidate> findPairCandidates(
     return out;
 }
 
+double armorBoxOverlap(const PairCandidate& a, const PairCandidate& b,
+                       const std::vector<LightBar>& bars) {
+    if (a.left < 0 || a.right < 0 || b.left < 0 || b.right < 0) return 0.0;
+    auto box_of = [&](const PairCandidate& pc, cv::Rect2f& box) {
+        const LightBar& l = bars[pc.left];
+        const LightBar& r = bars[pc.right];
+        const cv::Point2f pts[4] = {
+            l.center - l.axis * (l.length * 0.5f),
+            l.center + l.axis * (l.length * 0.5f),
+            r.center - r.axis * (r.length * 0.5f),
+            r.center + r.axis * (r.length * 0.5f)
+        };
+        float x0 = pts[0].x, x1 = pts[0].x, y0 = pts[0].y, y1 = pts[0].y;
+        for (int k = 1; k < 4; ++k) {
+            x0 = std::min(x0, pts[k].x); x1 = std::max(x1, pts[k].x);
+            y0 = std::min(y0, pts[k].y); y1 = std::max(y1, pts[k].y);
+        }
+        const float pad = 0.5f * std::max(l.width, r.width);
+        box = cv::Rect2f(x0 - pad, y0 - pad,
+                         (x1 - x0) + 2.0f * pad, (y1 - y0) + 2.0f * pad);
+    };
+
+    cv::Rect2f ra, rb;
+    box_of(a, ra);
+    box_of(b, rb);
+    const float ix0 = std::max(ra.x, rb.x);
+    const float iy0 = std::max(ra.y, rb.y);
+    const float ix1 = std::min(ra.x + ra.width, rb.x + rb.width);
+    const float iy1 = std::min(ra.y + ra.height, rb.y + rb.height);
+    if (ix1 <= ix0 || iy1 <= iy0) return 0.0;
+    const double inter = static_cast<double>(ix1 - ix0) * (iy1 - iy0);
+    const double small = std::min(static_cast<double>(ra.width) * ra.height,
+                                  static_cast<double>(rb.width) * rb.height);
+    return small > 0.0 ? inter / small : 0.0;
+}
+
+bool isLikelyFloorReflection(const PairCandidate& below,
+                             const PairCandidate& above,
+                             const std::vector<LightBar>& bars,
+                             const Params& p) {
+    if (below.left < 0 || below.right < 0 || above.left < 0 || above.right < 0) {
+        return false;
+    }
+    if (bars[below.left].is_red != bars[above.left].is_red) return false;
+    if (below.center.y <=
+        above.center.y + p.reflection_min_vertical_factor * above.mean_len) {
+        return false;
+    }
+    // The reflected plate has almost the same horizontal position and width as
+    // the real plate above it, but is much lower in the image (on the floor).
+    if (std::fabs(below.center.x - above.center.x) >
+        0.70 * std::max(1.0, static_cast<double>(above.geom.inner_w))) {
+        return false;
+    }
+    const double width_ratio = below.geom.inner_w / std::max(1.0f, above.geom.inner_w);
+    if (width_ratio < 0.55 || width_ratio > 1.80) return false;
+    const double len_ratio = below.mean_len / std::max(1.0, above.mean_len);
+    if (len_ratio < 0.45 || len_ratio > 2.20) return false;
+    return true;
+}
+
 std::vector<PairCandidate> selectPairs(const std::vector<PairCandidate>& candidates,
-                                       size_t bar_count) {
+                                       const std::vector<LightBar>& bars,
+                                       const Params& p) {
     std::vector<int> order(candidates.size());
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [&](int a, int b) {
         return candidates[a].score > candidates[b].score;
     });
 
-    std::vector<bool> used(bar_count, false);
+    std::vector<bool> used(bars.size(), false);
     std::vector<PairCandidate> chosen;
     for (int idx : order) {
         const PairCandidate& pc = candidates[idx];
         if (pc.left < 0 || pc.right < 0) continue;
         if (used[pc.left] || used[pc.right]) continue;
+
+        // Even after fragment merging, never let one physical bar be used by
+        // two armours.  This is what caused the "flash" box connecting two
+        // adjacent plates in red_4.
+        bool shares_bar = false;
+        for (size_t u = 0; u < bars.size() && !shares_bar; ++u) {
+            if (!used[u]) continue;
+            if (samePhysicalBar(bars[pc.left], bars[u], p) ||
+                samePhysicalBar(bars[pc.right], bars[u], p)) {
+                shares_bar = true;
+            }
+        }
+        if (shares_bar) continue;
 
         bool too_close = false;
         for (const auto& c : chosen) {
@@ -914,9 +1131,42 @@ std::vector<PairCandidate> selectPairs(const std::vector<PairCandidate>& candida
         }
         if (too_close) continue;
 
+        // Two detections must not cover the same image region.  A cross-pair
+        // involving a neighbouring plate often overlaps the true armour.
+        bool overlaps = false;
+        for (const auto& c : chosen) {
+            if (armorBoxOverlap(pc, c, bars) > p.max_armor_overlap_ratio) {
+                overlaps = true;
+                break;
+            }
+        }
+        if (overlaps) continue;
+
         used[pc.left] = true;
         used[pc.right] = true;
         chosen.push_back(pc);
+    }
+
+    // A floor/wax reflection appears below the real plate with nearly the same
+    // x position and width.  Remove that lower duplicate; it is the remaining
+    // "flash" source in red_4 after the pairing fixes.
+    if (p.reject_floor_reflection && chosen.size() > 1) {
+        std::vector<bool> drop(chosen.size(), false);
+        for (size_t i = 0; i < chosen.size(); ++i) {
+            for (size_t j = 0; j < chosen.size(); ++j) {
+                if (i == j) continue;
+                if (isLikelyFloorReflection(chosen[i], chosen[j], bars, p)) {
+                    drop[i] = true;
+                    break;
+                }
+            }
+        }
+        std::vector<PairCandidate> filtered;
+        filtered.reserve(chosen.size());
+        for (size_t i = 0; i < chosen.size(); ++i) {
+            if (!drop[i]) filtered.push_back(chosen[i]);
+        }
+        chosen.swap(filtered);
     }
 
     // Stable per-frame order: left to right.
@@ -1084,7 +1334,7 @@ DetectResult detectFrame(const cv::Mat& bgr, const Params& p) {
 
     result.candidates = findPairCandidates(hsv, hsv_channels[1], hsv_channels[2],
                                            top_hat, result.bars, p);
-    result.selected = selectPairs(result.candidates, result.bars.size());
+    result.selected = selectPairs(result.candidates, result.bars, p);
     return result;
 }
 
@@ -1184,6 +1434,7 @@ private:
         params_.max_pair_distance       = cfg.max_pair_distance;
         params_.max_pair_angle          = cfg.max_pair_angle;
         params_.max_pair_tilt           = cfg.max_pair_tilt;
+        params_.max_pair_center_dy_ratio = cfg.max_pair_center_dy_ratio;
         params_.max_endpoint_diff_ratio = cfg.max_endpoint_diff_ratio;
         params_.max_length_ratio_diff   = cfg.max_length_ratio_diff;
         params_.min_width_ratio         = cfg.min_width_ratio;
@@ -1236,6 +1487,7 @@ private:
             cfg.max_pair_distance       = params_.max_pair_distance;
             cfg.max_pair_angle          = params_.max_pair_angle;
             cfg.max_pair_tilt           = params_.max_pair_tilt;
+            cfg.max_pair_center_dy_ratio = params_.max_pair_center_dy_ratio;
             cfg.max_endpoint_diff_ratio = params_.max_endpoint_diff_ratio;
             cfg.max_length_ratio_diff   = params_.max_length_ratio_diff;
             cfg.min_width_ratio         = params_.min_width_ratio;
@@ -1388,6 +1640,8 @@ private:
         ft_detection::DetectionFrame out_msg;
         out_msg.header = header;
         out_msg.detections.reserve(detections.size());
+        const double score_norm =
+            1.2 + 0.5 + 0.4 + 1.5 + p.pair_centrality_weight + 0.1;
         for (const auto& det : detections) {
             if (det.tvec[2] < p.min_depth || det.tvec[2] > p.max_depth) continue;
 
@@ -1404,7 +1658,8 @@ private:
                 d.corners[k].y = det.corners[k].y;
                 d.corners[k].z = 0.0f;
             }
-            d.confidence = static_cast<float>(clampd(det.score / 3.7, 0.0, 1.0));
+            d.confidence = static_cast<float>(
+                clampd(det.score / std::max(1.0, score_norm), 0.0, 1.0));
             out_msg.detections.push_back(d);
 
             if (p.publish_tf && !camera_frame.empty()) {
