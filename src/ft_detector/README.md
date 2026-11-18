@@ -87,11 +87,24 @@ roslaunch ft_detector image_test.launch
 3. **相邻装甲板的灯条被连成一个假装甲板（red_4 中偶发闪现）**
    - 同一根物理灯条可能被过曝白心切成两个连通域；如果两个碎片分别参与配对，
      就会出现“两个装甲板共用一根灯条”的闪现框。
-   - `mergeDuplicateBars()` 会按中心距、灯条长度和包围框重叠率合并同一根灯条的
-     碎片；`selectPairs()` 再次检查候选灯条是否与已用灯条属于同一物理灯条。
-   - `pairCentrality()` 给“夹在左右灯条中间”的配对加分：真实前装甲板左右两侧
-     到最近同色灯条的距离接近，而“左前 + 右侧”“右前 + 左侧”这种跨板配对的
-     居中程度低。这个先验是解决 red_4 中两个相邻装甲板被连起来的关键。
+   - `mergeDuplicateBars()` 现在会把同一根灯条的两个碎片**按轴向上/下端点求并集**，
+     而不是只丢掉较小的一块。过曝空心时上下两半各只有半截长度，直接丢一半会
+     让真实大装甲板的灯条间距/长度比变大，转过来时很容易被误判成跨板配对。
+     判定碎片除了中心距、长度、包围框重叠，还允许沿灯条方向的小缝隙
+     `bar_merge_gap_factor` 和很小的横向偏移 `bar_merge_lateral_factor`。
+     `selectPairs()` 再次检查候选灯条是否与已用灯条属于同一物理灯条。
+   - “中央先验”`pairCentrality` 默认关闭（`pair_centrality_weight: 0.0`）。
+     它会把“侧灯条 + 前灯条”的跨板配对也当成中间的配对，在 red_1&3 左侧
+     反而造成误配，因此不要随手打开。
+   - 改为“大装甲板优先”：选择候选时先尝试大装甲板；大装甲板稳定出现
+     `large_memory_min_hits`（默认 4）次后，丢弃其左右
+     `large_dominance_factor`（默认 0.8）倍大装甲板宽度内的小装甲板。
+     `large_memory_frames`（默认 8）让大装甲板本帧漏检时仍能继续抑制附近的
+     侧/前灯条小框，避免左侧车反复闪出小假装甲板；要求先稳定出现四次，
+     是为了不让 red_4 里偶发的假大框压掉真实小装甲板。
+   - `temporal_confirm_frames`（默认 3）要求目标在连续/近邻帧里稳定出现，
+     只闪现 1~2 帧的错配不会发布；`temporal_max_misses`（默认 8）允许远处
+     真实目标短暂漏帧后继续累计。
    - 两个检测框重叠超过 `max_armor_overlap_ratio` 时，只保留分数高的一个。
    - 增加**高度、倾角和灯条长度硬约束**：`top_diff`、`bottom_diff` 都不能超过
      `max_endpoint_diff_ratio × 平均灯条长度`（默认 0.20），两根灯条中心高度差
@@ -107,17 +120,37 @@ roslaunch ft_detector image_test.launch
    - 不再用固定的像素距离 `distance > 80`；
    - 使用 `灯条中心距 / 平均灯条长度` 与真实 `W / L` 的比值判断，远近都能用；
    - 小装甲板允许 `W/L × [0.65, 1.30]`，大装甲板使用更紧的独立范围
-     `W/L × [0.85, 1.10]`，中间刻意留出间隔，再按误差最小的一类归类；
+     `W/L × [0.85, 1.18]`，中间刻意留出间隔，再按误差最小的一类归类；
    - 上限必须收紧：透视/偏航只会让灯条间距**变小**，不会让间距/灯条长度比
      大幅变大。`blue_guard.bag` 中两根相距很远灯条的比值约为 6.8，直接拒绝；
      `red_1&3.bag` 中“左侧板 + 前左灯条”的跨板比值约为 3.2，低于大装甲板
-     下限；“左车侧灯条 + 右车侧灯条”的跨车比值约为 5.0，高于大装甲板上限。
-   - 对大装甲板还检查投影框的宽/高比：`max_large_box_aspect` 默认 4.70。
-     跨车框约为 4.8~5.0，会被拒绝；宽高比超过 `wide_large_aspect_min`
-     （默认 4.00）时，还要求大数字区域有足够证据
-     `min_number_score_wide_large`（默认 0.08），否则也丢弃；
-     对所有大装甲板还要求 `min_number_score_large`（默认 0.05），
-     跨板块/跨车板的空背景内部数字分数接近 0，会被拒绝。
+     下限；“左车侧灯条 + 右车侧灯条”的跨车比值约为 5.3，高于大装甲板上限；
+     左侧真实大装甲板约为 4.79，可以通过（灯条局部缩短会让比值略大于 4.27）。
+   - 对大装甲板还检查投影框的宽/高比：`max_large_box_aspect` 默认 5.00。
+     左侧真实大装甲板宽高比约 4.79；跨车框约 5.3，会被拒绝。
+   - 配对得分以几何比例为主：`ratio_score_weight`（默认 1.8）权重大于
+     `number_score_weight`（默认 0.1）。大装甲板从右侧转进来时，真实的
+     水平大装甲板数字可能完全检测不到，不能因为数字分数低就输给旁边的
+     倾斜跨板框；几何比例更接近 `W/L` 的候选应当优先。
+   - 数字分数仍参与得分；只对**很宽的大装甲板**（宽高比大于
+     `wide_large_aspect_min`，默认 4.55）要求 `min_number_score_wide_large`
+     （默认 0.08），不把这个硬门槛用于远处小目标（否则会误删 `blue_guard`
+     的真目标）。
+   - **斜框硬否决**：大装甲板顶边倾角超过 `max_large_top_tilt`
+     （默认 1.5°）、左右边平均倾角超过 `max_large_side_tilt`（默认 4.0°），
+     或任意一条边超过 `max_large_single_side_tilt`（默认 5.0°）时直接丢弃；
+     小装甲板对应阈值为 `max_small_top_tilt`（3.0°）、
+     `max_small_side_tilt`（8.0°）、`max_small_single_side_tilt`（10.0°）。
+     这是专门处理 red_1&3 中“大装甲板从右侧转过来时出现的倾斜大框”，
+     以及左侧侧灯条形成的小斜框。宁可漏掉一个很斜的真实装甲板，也不发布
+     斜框；如果实车确实需要保留大角度倾斜靶，再单独放宽这些参数。
+   - 大装甲板优先：大装甲板稳定出现 `large_memory_min_hits`（默认 4）次后，
+     丢弃其左右 `large_dominance_factor`（默认 0.8）倍大装甲板宽度内的小
+     装甲板，避免左侧车的侧灯条/前灯条再被凑成小框；`large_memory_frames`
+     （默认 8）让大装甲板短暂漏检时仍保持这个约束。
+   - 短时闪现由 `temporal_confirm_frames`（默认 3 帧）过滤：一个目标必须
+     在连续/近邻帧里稳定出现才会发布；`temporal_max_misses` 默认 8，允许
+     远处目标短暂漏帧后继续累计。
 
 ## 参数和动态调参
 
@@ -140,23 +173,28 @@ launch”和“拖滑块”两种方式都有效，并且以 YAML 为初始值�
 1. 先看 `/ft/debug/mask`：只把 `red_v_min` / `blue_v_min` 降到灯条实心为止；
 2. 如果墙面、反光出现，优先提高 `min_bar_p90_v`、`min_white_ratio`、
    `min_sat_ratio`，不要为了“抓住反光”而降低它们；
-3. 如果真灯条丢失，检查 `min_contour_area`、`min_bar_length`、`max_bar_tilt`；
+3. 如果真灯条丢失，检查 `min_contour_area`、`min_bar_length`、`max_bar_tilt`，
+   以及 `bar_merge_gap_factor` / `bar_merge_lateral_factor`；如果是过曝空心
+   把一根灯条切成上下两段，不要简单删碎片，应让这两项把碎片并回一整根；
 4. 如果出现跨板配对，优先检查 `max_pair_tilt`（默认 12°）、
    `max_pair_center_dy_ratio`（默认 0.35）、`max_endpoint_diff_ratio`
    （默认 0.20）、`max_length_ratio_diff`（默认 0.20）、
-   `pair_centrality_weight`、`pair_centrality_y_band` 和
+   `large_dominance_factor`、`large_memory_frames`、
+   `large_memory_min_hits`、`max_large_side_tilt`、`max_large_top_tilt`、
+   `max_large_single_side_tilt`、`max_small_top_tilt`、
+   `max_small_side_tilt`、`max_small_single_side_tilt` 和
    `max_armor_overlap_ratio`；
+   `pair_centrality_weight` 保持 0，不要打开；
 5. 如果出现“两根灯条隔得很远”的超宽框，检查
    `armor_width_upper_tolerance`（默认 0.30）、
    `armor_large_gap_lower_factor`（默认 0.85）、
-   `armor_large_gap_upper_factor`（默认 1.10）、
-   `max_large_box_aspect`（默认 4.70）、
-   `min_number_score_large`（默认 0.05）；不要为了多检出而放大这些值，
+   `armor_large_gap_upper_factor`（默认 1.18）、
+   `max_large_box_aspect`（默认 5.00）；不要为了多检出而放大这些值，
    宁可漏检；
 6. 大 / 小装甲板：调整 `armor_small_width`、`armor_large_width`、
    `lightbar_length`，`armor_width_tolerance` 一般保持 0.65 左右，
    `armor_width_upper_tolerance` 保持 0.30 左右；
-   `armor_large_gap_upper_factor` 保持 1.10 左右。
+   `armor_large_gap_upper_factor` 保持 1.18 左右。
 
 ## 调试图
 

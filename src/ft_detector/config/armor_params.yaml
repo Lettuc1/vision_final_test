@@ -87,7 +87,7 @@ max_pair_center_dy_ratio: 0.35
 # 端点高度差和灯条长度差都要严格：半截灯条/被遮挡灯条宁可漏检，也不能硬凑。
 max_endpoint_diff_ratio: 0.20
 max_length_ratio_diff: 0.20
-min_width_ratio: 0.55
+min_width_ratio: 0.40
 min_pair_gap_factor: 0.60
 
 # 同一根物理灯条可能被过曝白心切成两个连通域。下面三个参数用于合并这种
@@ -95,14 +95,15 @@ min_pair_gap_factor: 0.60
 bar_merge_center_factor: 1.5   # 中心距 < 1.5 × 最大灯条宽度 -> 同一根
 bar_merge_length_factor: 0.30  # 或中心距 < 0.30 × 较短灯条长度 -> 同一根
 bar_merge_overlap: 0.35        # 或包围框重叠 / 较小面积 > 0.35 -> 同一根
+bar_merge_gap_factor: 1.2       # 沿灯条方向的小缝隙 / 最大宽度
+bar_merge_lateral_factor: 1.2   # 横向偏移 / 最大宽度
 
 # 两个检测框重叠比例超过该值时只保留分数高的一个。
 max_armor_overlap_ratio: 0.35
 
-# 中央先验：真实前装甲板通常夹在左右侧装甲板/侧灯条之间，左右两侧
-# 到最近同色灯条的距离接近；用这个“居中程度”给配对加分，可以优先
-# 选出中间的真实装甲板，而不是“左前+右侧”“右前+左侧”的跨板配对。
-pair_centrality_weight: 2.0
+# 中央先验默认关闭：它会把“侧灯条 + 前灯条”的跨板配对也当成中央配对，
+# 在 red_1&3 左侧反而造成误配。保持 0。
+pair_centrality_weight: 0.0
 pair_centrality_y_band: 2.0
 
 # 地胶/地板反光会出现在真实装甲板正下方的镜像位置，x 位置和宽度接近。
@@ -128,22 +129,48 @@ lightbar_length: 55.0
 # 小装甲板间距/长度比范围：W/L * [0.65, 1.30]
 armor_width_tolerance: 0.65
 armor_width_upper_tolerance: 0.30
-# 大装甲板使用更紧的独立范围：W/L * [0.85, 1.10]。
+# 大装甲板的独立范围：W/L * [0.85, 1.18]。
 # red_1&3 中“左侧板 + 前左灯条”的跨板比值约 3.2，低于 0.85*4.27≈3.63；
-# “左车侧灯条 + 右车侧灯条”的跨车比值约 5.0，高于 1.10*4.27≈4.70。
+# “左车侧灯条 + 右车侧灯条”的跨车比值约 5.3，高于 1.18*4.27≈5.04。
 # 这两类硬凑配对都会被拒绝；小/大之间刻意留出间隔，宁可漏检。
 armor_large_gap_lower_factor: 0.85
-armor_large_gap_upper_factor: 1.10
-# 大装甲板框的宽/高比上限。red_1&3 中“左车右侧灯条 + 右车左侧灯条”的
-# 跨车框约 4.8~5.0；真实左侧大装甲板约 4.5，因此上限取 4.70。
-max_large_box_aspect: 4.70
-# 对这种很宽的大装甲板，必须能在大数字区域找到足够证据；empty 背景
-# 的跨车配对会被拒绝。宁可漏检。
-wide_large_aspect_min: 4.00
+armor_large_gap_upper_factor: 1.18
+# 大装甲板框的宽/高比上限。左侧真实大装甲板约 4.79；红 1&3 的跨车框约
+# 5.3，因此上限取 5.00；再配合下面的数字证据门槛。
+max_large_box_aspect: 5.00
+# 很宽的大装甲板（aspect > 4.55）必须有数字证据；跨车空背景框会被拒绝。
+# 注意：只对大而宽的框启用，不用于远处小目标。
+wide_large_aspect_min: 4.55
 min_number_score_wide_large: 0.08
-# 所有大装甲板都必须有一点大数字证据；跨板块/跨车块的内部通常是空背景，
-# 数字分数接近 0。默认 0.05，宁可漏掉很暗的大装甲板。
-min_number_score_large: 0.05
+# 数字证据权重放低：转动时真实大装甲板数字可能检测不到，
+# 几何比例（gap/length）应优先；数字只做弱加分。
+number_score_weight: 0.1
+ratio_score_weight: 1.8
+# 大装甲板优先：大装甲板稳定出现 2 帧后，丢弃其左右 1.5 个大装甲板
+# 宽度内的小装甲板，避免左侧车的侧灯条/前灯条硬凑成小框。
+# 要求先稳定 2 帧，避免 red_4 偶发假大框压掉真实小装甲板。
+large_dominance_factor: 0.8
+# 大装甲板左右两条边的平均绝对倾角超过该值时直接拒绝。水平真实大装甲板
+# 约 0~6°，倾斜框通常 7~14°。这是“宁可漏检”的硬约束：宁可漏掉一个
+# 真实但很斜的装甲板，也不发布倾斜大框。
+max_large_side_tilt: 4.0
+max_large_top_tilt: 1.5
+max_large_single_side_tilt: 5.0
+max_small_top_tilt: 3.0
+max_small_side_tilt: 8.0
+max_small_single_side_tilt: 10.0
+# 大装甲板即使本帧漏检，也在此帧数内继续抑制附近的小装甲板。
+large_memory_frames: 8
+# 0 = 任何大装甲板都可进入记忆；主要靠下面的“稳定 2 帧”过滤假大框。
+large_memory_min_number_score: 0.0
+large_memory_min_hits: 4
+
+# 短时确认：一个候选必须在连续/近邻帧里出现至少 3 次才发布，用来消掉
+# red_1&3 左侧装甲板识别中只闪现 1~2 帧的“相邻灯条”错配。设为 1 可关闭。
+temporal_confirm_frames: 3
+temporal_max_misses: 8
+temporal_match_width_ratio: 1.0
+temporal_match_min_px: 70.0
 
 # ------------------------------ PnP checks ---------------------------------
 max_reproj_error: 20.0

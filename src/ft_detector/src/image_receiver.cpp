@@ -137,16 +137,21 @@ struct Params {
     double max_pair_tilt              = 12.0;  // deg of centre line
     double max_pair_center_dy_ratio   = 0.35;  // |dy| / mean bar length
     double max_endpoint_diff_ratio    = 0.20;
+    // When a large plate turns in from the right, one bar is higher in the
+    // image.  The true large pair can exceed the strict small-pair limits;
+    // it must instead be rigid in width (bars similar width).
     double max_length_ratio_diff      = 0.20;
-    double min_width_ratio            = 0.55;
+    double min_width_ratio            = 0.40;
     double min_pair_gap_factor        = 0.60;
     // Fragments of one physical light bar can be split into two components by
     // an over-exposed white core.  These thresholds merge such duplicates.
     double bar_merge_center_factor    = 1.5;
     double bar_merge_length_factor    = 0.30;
     double bar_merge_overlap          = 0.35;
+    double bar_merge_gap_factor       = 1.2;
+    double bar_merge_lateral_factor   = 1.2;
     double max_armor_overlap_ratio    = 0.35;
-    double pair_centrality_weight     = 2.0;
+    double pair_centrality_weight     = 0.0;
     double pair_centrality_y_band     = 2.0;
     bool   reject_floor_reflection     = true;
     double reflection_min_vertical_factor = 0.60;
@@ -162,11 +167,28 @@ struct Params {
     double armor_width_tolerance = 0.65;       // small armour lower factor
     double armor_width_upper_tolerance = 0.30; // small armour upper factor
     double armor_large_gap_lower_factor = 0.85; // large armour lower factor
-    double armor_large_gap_upper_factor = 1.10; // large armour upper factor
-    double max_large_box_aspect = 4.70;         // width / mean bar height
-    double wide_large_aspect_min = 4.00;        // require number evidence above this
+    double armor_large_gap_upper_factor = 1.18; // large armour upper factor
+    double max_large_box_aspect = 5.00;         // width / mean bar height
+    double wide_large_aspect_min = 4.55;        // require number evidence above this
     double min_number_score_wide_large = 0.08;
-    double min_number_score_large = 0.05;
+    double number_score_weight = 0.1;
+    double ratio_score_weight = 1.8;
+    double large_dominance_factor = 0.8;        // suppress local small plates
+    double max_large_side_tilt = 4.0; // reject visibly slanted large boxes
+    double max_large_top_tilt = 1.5;  // top edge must be nearly level
+    double max_large_single_side_tilt = 5.0;
+    double max_small_top_tilt = 3.0;
+    double max_small_side_tilt = 8.0;
+    double max_small_single_side_tilt = 10.0;
+    int    large_memory_frames = 8;             // keep large memory this long
+    double large_memory_min_number_score = 0.0; // 0 = every selected large plate
+    int    large_memory_min_hits = 4;           // require stable large before suppression
+    // Short temporal confirmation: one/two-frame fragment pairs (the left
+    // robot flashes in red_1&3) must not be published.  Set to 1 to disable.
+    int    temporal_confirm_frames = 3;
+    int    temporal_max_misses = 8;
+    double temporal_match_width_ratio = 1.0;
+    double temporal_match_min_px = 70.0;
 
     // PnP sanity
     double max_reproj_error = 20.0;  // px RMSE
@@ -261,6 +283,8 @@ Params loadParams(ros::NodeHandle& pnh) {
     p.bar_merge_center_factor = readParam<double>(pnh, "bar_merge_center_factor", p.bar_merge_center_factor);
     p.bar_merge_length_factor = readParam<double>(pnh, "bar_merge_length_factor", p.bar_merge_length_factor);
     p.bar_merge_overlap       = readParam<double>(pnh, "bar_merge_overlap", p.bar_merge_overlap);
+    p.bar_merge_gap_factor    = readParam<double>(pnh, "bar_merge_gap_factor", p.bar_merge_gap_factor);
+    p.bar_merge_lateral_factor = readParam<double>(pnh, "bar_merge_lateral_factor", p.bar_merge_lateral_factor);
     p.max_armor_overlap_ratio = readParam<double>(pnh, "max_armor_overlap_ratio", p.max_armor_overlap_ratio);
     p.pair_centrality_weight = readParam<double>(pnh, "pair_centrality_weight", p.pair_centrality_weight);
     p.pair_centrality_y_band = readParam<double>(pnh, "pair_centrality_y_band", p.pair_centrality_y_band);
@@ -287,8 +311,38 @@ Params loadParams(ros::NodeHandle& pnh) {
         pnh, "wide_large_aspect_min", p.wide_large_aspect_min);
     p.min_number_score_wide_large = readParam<double>(
         pnh, "min_number_score_wide_large", p.min_number_score_wide_large);
-    p.min_number_score_large = readParam<double>(
-        pnh, "min_number_score_large", p.min_number_score_large);
+    p.number_score_weight = readParam<double>(
+        pnh, "number_score_weight", p.number_score_weight);
+    p.ratio_score_weight = readParam<double>(
+        pnh, "ratio_score_weight", p.ratio_score_weight);
+    p.large_dominance_factor = readParam<double>(
+        pnh, "large_dominance_factor", p.large_dominance_factor);
+    p.max_large_side_tilt = readParam<double>(
+        pnh, "max_large_side_tilt", p.max_large_side_tilt);
+    p.max_large_top_tilt = readParam<double>(
+        pnh, "max_large_top_tilt", p.max_large_top_tilt);
+    p.max_large_single_side_tilt = readParam<double>(
+        pnh, "max_large_single_side_tilt", p.max_large_single_side_tilt);
+    p.max_small_top_tilt = readParam<double>(
+        pnh, "max_small_top_tilt", p.max_small_top_tilt);
+    p.max_small_side_tilt = readParam<double>(
+        pnh, "max_small_side_tilt", p.max_small_side_tilt);
+    p.max_small_single_side_tilt = readParam<double>(
+        pnh, "max_small_single_side_tilt", p.max_small_single_side_tilt);
+    p.large_memory_frames = readParam<int>(
+        pnh, "large_memory_frames", p.large_memory_frames);
+    p.large_memory_min_number_score = readParam<double>(
+        pnh, "large_memory_min_number_score", p.large_memory_min_number_score);
+    p.large_memory_min_hits = readParam<int>(
+        pnh, "large_memory_min_hits", p.large_memory_min_hits);
+    p.temporal_confirm_frames = readParam<int>(
+        pnh, "temporal_confirm_frames", p.temporal_confirm_frames);
+    p.temporal_max_misses = readParam<int>(
+        pnh, "temporal_max_misses", p.temporal_max_misses);
+    p.temporal_match_width_ratio = readParam<double>(
+        pnh, "temporal_match_width_ratio", p.temporal_match_width_ratio);
+    p.temporal_match_min_px = readParam<double>(
+        pnh, "temporal_match_min_px", p.temporal_match_min_px);
 
     p.max_reproj_error = readParam<double>(pnh, "max_reproj_error", p.max_reproj_error);
     p.min_depth        = readParam<double>(pnh, "min_depth", p.min_depth);
@@ -612,35 +666,83 @@ bool samePhysicalBar(const LightBar& a, const LightBar& b, const Params& p) {
             return true;
         }
     }
+
+    // A long LED bar can be split into two vertical fragments with a small
+    // dark gap between them (bright/over-exposed core).  Their bounding boxes
+    // do not overlap, but they are still one physical bar: similar axis, small
+    // lateral offset, and a small gap along the bar.
+    cv::Point2f axis = a.axis + b.axis;
+    if (cv::norm(axis) < 1.0e-6f) return false;
+    axis *= 1.0f / static_cast<float>(cv::norm(axis));
+    const cv::Point2f perp(-axis.y, axis.x);
+    const cv::Point2f delta = b.center - a.center;
+    const double along = std::fabs(delta.dot(axis));
+    const double lateral = std::fabs(delta.dot(perp));
+    const double axis_gap = along - 0.5 * (a.length + b.length);
+    if (axis_gap < p.bar_merge_gap_factor * max_w &&
+        lateral < p.bar_merge_lateral_factor * max_w) {
+        return true;
+    }
     return false;
+}
+
+LightBar mergeBarPair(const LightBar& a, const LightBar& b) {
+    LightBar m = a.area >= b.area ? a : b;
+    cv::Point2f axis = a.axis + b.axis;
+    const float an = cv::norm(axis);
+    if (an < 1.0e-6f) return m;
+    axis *= 1.0f / an;
+    const cv::Point2f perp(-axis.y, axis.x);
+
+    float lo = std::numeric_limits<float>::max();
+    float hi = -std::numeric_limits<float>::max();
+    for (const LightBar* bar : {&a, &b}) {
+        for (int sign : {-1, 1}) {
+            const cv::Point2f pt = bar->center + bar->axis *
+                (static_cast<float>(sign) * bar->length * 0.5f);
+            const float p = pt.dot(axis);
+            lo = std::min(lo, p);
+            hi = std::max(hi, p);
+        }
+    }
+    const float lat = 0.5f * (a.center.dot(perp) + b.center.dot(perp));
+    m.center = axis * (0.5f * (lo + hi)) + perp * lat;
+    m.length = std::max(1.0f, hi - lo);
+    m.width = std::max(a.width, b.width);
+    m.axis = axis;
+    m.area = a.area + b.area;
+    m.p90_v = std::max(a.p90_v, b.p90_v);
+    m.mean_v = 0.5 * (a.mean_v + b.mean_v);
+    m.white_ratio = 0.5 * (a.white_ratio + b.white_ratio);
+    m.sat_ratio = 0.5 * (a.sat_ratio + b.sat_ratio);
+    m.tilt = std::asin(std::min(1.0, std::fabs(static_cast<double>(axis.x)))) *
+             180.0 / kPi;
+    const float angle = std::atan2(axis.y, axis.x) * 180.0f / static_cast<float>(kPi);
+    m.rect = cv::RotatedRect(m.center, cv::Size2f(m.width, m.length), angle);
+    m.corners = {m.center - axis * (m.length * 0.5f) - perp * (m.width * 0.5f),
+                 m.center - axis * (m.length * 0.5f) + perp * (m.width * 0.5f),
+                 m.center + axis * (m.length * 0.5f) + perp * (m.width * 0.5f),
+                 m.center + axis * (m.length * 0.5f) - perp * (m.width * 0.5f)};
+    return m;
 }
 
 std::vector<LightBar> mergeDuplicateBars(const std::vector<LightBar>& bars,
                                          const Params& p) {
-    std::vector<bool> removed(bars.size(), false);
-    auto better = [](const LightBar& a, const LightBar& b) {
-        if (a.area != b.area) return a.area > b.area;
-        if (std::fabs(a.length - b.length) > 1.0f) return a.length > b.length;
-        return a.p90_v > b.p90_v;
-    };
-
-    for (size_t i = 0; i < bars.size(); ++i) {
-        if (removed[i]) continue;
-        for (size_t j = i + 1; j < bars.size(); ++j) {
-            if (removed[j]) continue;
-            if (!samePhysicalBar(bars[i], bars[j], p)) continue;
-            if (better(bars[j], bars[i])) {
-                removed[i] = true;
-                break;  // bars[i] is the weaker fragment; move on
-            }
-            removed[j] = true;
-        }
-    }
-
+    // Union fragments instead of dropping the smaller one: when the LED is
+    // over-exposed hollow, the two halves each have only part of the true bar
+    // length.  Dropping one half leaves a too-short bar and breaks the real
+    // large-plate pairing.
     std::vector<LightBar> merged;
     merged.reserve(bars.size());
-    for (size_t i = 0; i < bars.size(); ++i) {
-        if (!removed[i]) merged.push_back(bars[i]);
+    for (const LightBar& bar : bars) {
+        bool attached = false;
+        for (LightBar& m : merged) {
+            if (!samePhysicalBar(m, bar, p)) continue;
+            m = mergeBarPair(m, bar);
+            attached = true;
+            break;
+        }
+        if (!attached) merged.push_back(bar);
     }
     return merged;
 }
@@ -736,17 +838,15 @@ bool buildPairGeometry(const LightBar& left, const LightBar& right,
     g.top_diff = std::fabs(g.top_left - g.top_right);
     g.bottom_diff = std::fabs(g.bottom_left - g.bottom_right);
 
-    // Do NOT allow an arbitrary vertical offset.  In red_4 the side plate and
-    // the front plate have similar-looking bars; joining the right bar of one
-    // plate to the left bar of the other produces a visibly tilted "armour"
-    // with the two bars at clearly different heights.  All real front plates
-    // in these bags have their two bars at almost the same image height.
+    // Strict height/endpoint rigidity.  A tilted pair that spans the side bar
+    // and the adjacent front bar (the red_1&3 left-vehicle failure when the
+    // plate turns in from the right) has one bar clearly higher.  Do not relax
+    // this for large plates: the real large plate in that motion is the
+    // level pair, while the tilted one is the cross pair.
     if (g.top_diff > p.max_endpoint_diff_ratio * g.mean_len ||
         g.bottom_diff > p.max_endpoint_diff_ratio * g.mean_len) {
         return false;
     }
-    // Extra rigidity check for perspective: the top and bottom offsets must
-    // also agree with each other.
     if (std::fabs(g.top_diff - g.bottom_diff) >
         p.max_endpoint_diff_ratio * g.mean_len) {
         return false;
@@ -761,12 +861,13 @@ bool buildPairGeometry(const LightBar& left, const LightBar& right,
                   180.0 / kPi;
     if (g.pair_tilt > p.max_pair_tilt) return false;
 
-    // Big / small classification is scale invariant: compare the gap between
-    // bar centres with the bar length.
     const double small_exp = p.armor_small_width / p.lightbar_length;
     const double large_exp = p.armor_large_width / p.lightbar_length;
     const double gap_ratio = gap / mean_len;
 
+    // Big / small classification is scale invariant: compare the gap between
+    // bar centres with the bar length.  small_exp/large_exp/gap_ratio were
+    // computed above so the relaxed large-pair limits can use them.
     // The upper bound must be much tighter than the lower bound.  Projecting a
     // plate with yaw only makes the gap *smaller*; a gap much wider than W/L is
     // therefore not a real plate, it is two bars from different plates (the
@@ -1039,31 +1140,52 @@ std::vector<PairCandidate> findPairCandidates(
             if (inner_mean > p.max_inner_mean_v) continue;
             if (colored_ratio > p.max_inner_colored_ratio) continue;
 
+            const cv::Point2f lt = left->center - left->axis * (left->length * 0.5f);
+            const cv::Point2f lb = left->center + left->axis * (left->length * 0.5f);
+            const cv::Point2f rt = right->center - right->axis * (right->length * 0.5f);
+            const cv::Point2f rb = right->center + right->axis * (right->length * 0.5f);
+            const double edge_w = 0.5 * (pointDistance(lt, rt) + pointDistance(lb, rb));
+            const double edge_h = 0.5 * (pointDistance(lt, lb) + pointDistance(rt, rb));
+            const double box_aspect = edge_w / std::max(1.0, edge_h);
+            auto side_angle = [](const cv::Point2f& a, const cv::Point2f& b) {
+                return std::atan2(b.y - a.y, b.x - a.x) * 180.0 / kPi - 90.0;
+            };
+            const double side_l = side_angle(lt, lb);
+            const double side_r = side_angle(rt, rb);
+            const double top_angle =
+                std::atan2(rt.y - lt.y, rt.x - lt.x) * 180.0 / kPi;
             if (pc.is_large) {
-                // A real large plate always has a big number; a cross pair
-                // between two plates/vehicles usually has empty background in
-                // its interior and a near-zero number score.  Keep the gate
-                // low enough for a dark but visible number, high enough for
-                // empty background.
-                if (number_score < p.min_number_score_large) continue;
-                // Use the actual projected quadrilateral aspect, not only the
-                // bar-centre distance: a pair made from the two facing side
-                // bars of two different vehicles has aspect ≈4.8-5.0 while the
-                // real large plate is ≈4.5.  A large plate with this width must
-                // also contain the big armour number; otherwise it is two
-                // unrelated bars with empty background between them.
-                const cv::Point2f lt = left->center - left->axis * (left->length * 0.5f);
-                const cv::Point2f lb = left->center + left->axis * (left->length * 0.5f);
-                const cv::Point2f rt = right->center - right->axis * (right->length * 0.5f);
-                const cv::Point2f rb = right->center + right->axis * (right->length * 0.5f);
-                const double edge_w = 0.5 * (pointDistance(lt, rt) + pointDistance(lb, rb));
-                const double edge_h = 0.5 * (pointDistance(lt, lb) + pointDistance(rt, rb));
-                const double box_aspect = edge_w / std::max(1.0, edge_h);
+                // Reject visibly slanted large boxes.  The true level large
+                // plate in the red_1&3 transition has side edges <~5° and top
+                // edges <~1.5°; a missed yawed plate is preferred over a
+                // tilted large box.
+                if (std::fabs(side_l) > p.max_large_single_side_tilt ||
+                    std::fabs(side_r) > p.max_large_single_side_tilt) {
+                    continue;
+                }
+                if (0.5 * (std::fabs(side_l) + std::fabs(side_r)) >
+                    p.max_large_side_tilt) {
+                    continue;
+                }
+                if (std::fabs(top_angle) > p.max_large_top_tilt) continue;
                 if (box_aspect > p.max_large_box_aspect) continue;
                 if (box_aspect > p.wide_large_aspect_min &&
                     number_score < p.min_number_score_wide_large) {
                     continue;
                 }
+            } else {
+                // Small side-plate pairs on the left robot can also be
+                // visibly tilted; reject the clearly tilted ones while keeping
+                // normal far small plates.
+                if (std::fabs(side_l) > p.max_small_single_side_tilt ||
+                    std::fabs(side_r) > p.max_small_single_side_tilt) {
+                    continue;
+                }
+                if (0.5 * (std::fabs(side_l) + std::fabs(side_r)) >
+                    p.max_small_side_tilt) {
+                    continue;
+                }
+                if (std::fabs(top_angle) > p.max_small_top_tilt) continue;
             }
 
             pc.number_score = number_score;
@@ -1079,10 +1201,11 @@ std::vector<PairCandidate> findPairCandidates(
             const double barq = 0.5 * (left->p90_v + right->p90_v) / 255.0;
             const double dark = std::max(0.0, 1.0 - inner_mean / 220.0);
 
-            pc.score = 1.2 * (1.0 - std::min(1.0, pc.ratio_error)) +
+            pc.score = p.ratio_score_weight *
+                           (1.0 - std::min(1.0, pc.ratio_error)) +
                        0.5 * sym +
                        0.4 * barq +
-                       1.5 * pc.number_score +
+                       p.number_score_weight * pc.number_score +
                        p.pair_centrality_weight * pc.centrality +
                        0.1 * dark;
             out.push_back(pc);
@@ -1158,6 +1281,9 @@ std::vector<PairCandidate> selectPairs(const std::vector<PairCandidate>& candida
     std::vector<int> order(candidates.size());
     std::iota(order.begin(), order.end(), 0);
     std::sort(order.begin(), order.end(), [&](int a, int b) {
+        if (candidates[a].is_large != candidates[b].is_large) {
+            return candidates[a].is_large;  // try large plates first
+        }
         return candidates[a].score > candidates[b].score;
     });
 
@@ -1383,7 +1509,7 @@ DetectResult detectFrame(const cv::Mat& bgr, const Params& p) {
 
     extractBars(hsv, result.red_mask,  true,  p, result.bars);
     extractBars(hsv, result.blue_mask, false, p, result.bars);
-
+    result.bars = mergeDuplicateBars(result.bars, p);
 
     // One top-hat image serves all pair candidates.
     cv::Mat top_hat;
@@ -1397,6 +1523,25 @@ DetectResult detectFrame(const cv::Mat& bgr, const Params& p) {
     result.selected = selectPairs(result.candidates, result.bars, p);
     return result;
 }
+
+// =============================================================================
+// Temporal confirmation
+// =============================================================================
+struct TemporalTrack {
+    cv::Point2f center;
+    float box_width = 0.0f;
+    bool is_red = false;
+    bool is_large = false;
+    int hits = 0;
+    int last_frame = 0;
+};
+
+struct LargeMemory {
+    cv::Point2f center;
+    float box_width = 0.0f;
+    int last_frame = 0;
+    int hits = 0;
+};
 
 // =============================================================================
 // ROS node
@@ -1505,7 +1650,20 @@ private:
         params_.max_large_box_aspect = cfg.max_large_box_aspect;
         params_.wide_large_aspect_min = cfg.wide_large_aspect_min;
         params_.min_number_score_wide_large = cfg.min_number_score_wide_large;
-        params_.min_number_score_large = cfg.min_number_score_large;
+        params_.number_score_weight = cfg.number_score_weight;
+        params_.ratio_score_weight = cfg.ratio_score_weight;
+        params_.large_dominance_factor = cfg.large_dominance_factor;
+        params_.max_large_side_tilt = cfg.max_large_side_tilt;
+        params_.max_large_top_tilt = cfg.max_large_top_tilt;
+        params_.max_large_single_side_tilt = cfg.max_large_single_side_tilt;
+        params_.max_small_top_tilt = cfg.max_small_top_tilt;
+        params_.max_small_side_tilt = cfg.max_small_side_tilt;
+        params_.max_small_single_side_tilt = cfg.max_small_single_side_tilt;
+        params_.large_memory_frames = cfg.large_memory_frames;
+        params_.large_memory_min_number_score = cfg.large_memory_min_number_score;
+        params_.large_memory_min_hits = cfg.large_memory_min_hits;
+        params_.temporal_confirm_frames = cfg.temporal_confirm_frames;
+        params_.temporal_max_misses = cfg.temporal_max_misses;
 
         params_.max_inner_mean_v        = cfg.max_inner_mean_v;
         params_.max_inner_colored_ratio = cfg.max_inner_colored_ratio;
@@ -1565,7 +1723,20 @@ private:
             cfg.max_large_box_aspect = params_.max_large_box_aspect;
             cfg.wide_large_aspect_min = params_.wide_large_aspect_min;
             cfg.min_number_score_wide_large = params_.min_number_score_wide_large;
-            cfg.min_number_score_large = params_.min_number_score_large;
+            cfg.number_score_weight = params_.number_score_weight;
+            cfg.ratio_score_weight = params_.ratio_score_weight;
+            cfg.large_dominance_factor = params_.large_dominance_factor;
+            cfg.max_large_side_tilt = params_.max_large_side_tilt;
+            cfg.max_large_top_tilt = params_.max_large_top_tilt;
+            cfg.max_large_single_side_tilt = params_.max_large_single_side_tilt;
+            cfg.max_small_top_tilt = params_.max_small_top_tilt;
+            cfg.max_small_side_tilt = params_.max_small_side_tilt;
+            cfg.max_small_single_side_tilt = params_.max_small_single_side_tilt;
+            cfg.large_memory_frames = params_.large_memory_frames;
+            cfg.large_memory_min_number_score = params_.large_memory_min_number_score;
+            cfg.large_memory_min_hits = params_.large_memory_min_hits;
+            cfg.temporal_confirm_frames = params_.temporal_confirm_frames;
+            cfg.temporal_max_misses = params_.temporal_max_misses;
 
             cfg.max_inner_mean_v        = params_.max_inner_mean_v;
             cfg.max_inner_colored_ratio = params_.max_inner_colored_ratio;
@@ -1699,6 +1870,14 @@ private:
             }
         }
 
+        // Keep the large front plate dominant: local small side/front pairs are
+        // suppressed even when the large plate is missed in this frame.
+        detections = suppressSmallNearLarge(detections, p);
+
+        // Require a few consecutive frames before publishing.  A one/two-frame
+        // fragment pair on the left robot in red_1&3 is rejected here.
+        detections = confirmDetections(detections, p);
+
         // Stable, unique per-frame IDs, ordered left-to-right.
         std::sort(detections.begin(), detections.end(),
                   [](const Detection& a, const Detection& b) {
@@ -1776,6 +1955,131 @@ private:
                      << " pairs=" << result.candidates.size()
                      << " selected=" << result.selected.size()
                      << " detections=" << out_msg.detections.size());
+    }
+
+    // ---------------------------------------------------------------------
+    // Recent large-plate memory: small side/front pairs on the same vehicle
+    // stay suppressed even in frames where the large plate itself is missed.
+    // ---------------------------------------------------------------------
+    std::vector<Detection> suppressSmallNearLarge(
+            const std::vector<Detection>& dets, const Params& p) {
+        // Update memory with any large detection in this frame.
+        for (const auto& det : dets) {
+            if (!det.is_large) continue;
+            if (det.number_score < p.large_memory_min_number_score) continue;
+            const float bw = static_cast<float>(
+                cv::norm(det.corners[0] - det.corners[1]));
+            int best = -1;
+            double best_d = std::numeric_limits<double>::max();
+            for (size_t i = 0; i < large_memory_.size(); ++i) {
+                const double d = pointDistance(large_memory_[i].center, det.center);
+                if (d < best_d) { best_d = d; best = static_cast<int>(i); }
+            }
+            if (best >= 0 && best_d < 0.75 * std::max(bw, large_memory_[best].box_width)) {
+                large_memory_[best].center = det.center;
+                large_memory_[best].box_width = bw;
+                large_memory_[best].last_frame = frame_counter_;
+                large_memory_[best].hits += 1;
+            } else {
+                large_memory_.push_back({det.center, bw, frame_counter_, 1});
+            }
+        }
+
+        std::vector<Detection> kept;
+        kept.reserve(dets.size());
+        for (const auto& det : dets) {
+            if (det.is_large) { kept.push_back(det); continue; }
+            bool suppressed = false;
+            for (const auto& lm : large_memory_) {
+                if (lm.hits < p.large_memory_min_hits) continue;
+                if (frame_counter_ - lm.last_frame > p.large_memory_frames) continue;
+                const double radius = p.large_dominance_factor *
+                                      std::max(1.0, static_cast<double>(lm.box_width));
+                if (std::fabs(det.center.x - lm.center.x) < radius) {
+                    suppressed = true;
+                    break;
+                }
+            }
+            if (!suppressed) kept.push_back(det);
+        }
+
+        std::vector<LargeMemory> alive;
+        for (const auto& lm : large_memory_) {
+            if (frame_counter_ - lm.last_frame <= p.large_memory_frames) {
+                alive.push_back(lm);
+            }
+        }
+        large_memory_.swap(alive);
+        return kept;
+    }
+
+    // ---------------------------------------------------------------------
+    // Temporal confirmation (removes one/two-frame cross-pair flashes)
+    // ---------------------------------------------------------------------
+    std::vector<Detection> confirmDetections(
+            const std::vector<Detection>& candidates, const Params& p) {
+        ++frame_counter_;
+        if (p.temporal_confirm_frames <= 1) return candidates;
+
+        std::vector<bool> matched(tracks_.size(), false);
+        std::vector<Detection> accepted;
+        accepted.reserve(candidates.size());
+
+        for (const auto& det : candidates) {
+            const float det_w = static_cast<float>(
+                cv::norm(det.corners[0] - det.corners[1]));
+            int best = -1;
+            double best_dist = std::numeric_limits<double>::max();
+            for (size_t i = 0; i < tracks_.size(); ++i) {
+                if (matched[i]) continue;
+                if (tracks_[i].is_red != det.is_red) continue;
+                const double d = pointDistance(tracks_[i].center, det.center);
+                const double threshold = std::max(
+                    p.temporal_match_min_px,
+                    p.temporal_match_width_ratio *
+                        std::max(static_cast<double>(det_w),
+                                 static_cast<double>(tracks_[i].box_width)));
+                if (d <= threshold && d < best_dist) {
+                    best = static_cast<int>(i);
+                    best_dist = d;
+                }
+            }
+
+            if (best >= 0) {
+                TemporalTrack& tr = tracks_[best];
+                tr.center = det.center;
+                tr.box_width = det_w;
+                tr.is_large = det.is_large;
+                tr.hits += 1;
+                tr.last_frame = frame_counter_;
+                matched[best] = true;
+                if (tr.hits >= p.temporal_confirm_frames) {
+                    accepted.push_back(det);
+                }
+            } else {
+                TemporalTrack tr;
+                tr.center = det.center;
+                tr.box_width = det_w;
+                tr.is_red = det.is_red;
+                tr.is_large = det.is_large;
+                tr.hits = 1;
+                tr.last_frame = frame_counter_;
+                tracks_.push_back(tr);
+                matched.push_back(true);
+                if (p.temporal_confirm_frames <= 1) accepted.push_back(det);
+            }
+        }
+
+        // Drop tracks that have not been seen for a few processed frames.
+        std::vector<TemporalTrack> alive;
+        alive.reserve(tracks_.size());
+        for (size_t i = 0; i < tracks_.size(); ++i) {
+            if (frame_counter_ - tracks_[i].last_frame <= p.temporal_max_misses) {
+                alive.push_back(tracks_[i]);
+            }
+        }
+        tracks_.swap(alive);
+        return accepted;
     }
 
     // ---------------------------------------------------------------------
@@ -1887,6 +2191,10 @@ private:
     int camera_width_ = 0;
     int camera_height_ = 0;
     bool has_camera_info_ = false;
+
+    int frame_counter_ = 0;
+    std::vector<TemporalTrack> tracks_;
+    std::vector<LargeMemory> large_memory_;
 };
 
 }  // namespace ft_armor
