@@ -150,15 +150,16 @@ ratio_score_weight: 1.8
 # 宽度内的小装甲板，避免左侧车的侧灯条/前灯条硬凑成小框。
 # 要求先稳定 2 帧，避免 red_4 偶发假大框压掉真实小装甲板。
 large_dominance_factor: 0.8
-# 大装甲板左右两条边的平均绝对倾角超过该值时直接拒绝。水平真实大装甲板
-# 约 0~6°，倾斜框通常 7~14°。这是“宁可漏检”的硬约束：宁可漏掉一个
-# 真实但很斜的装甲板，也不发布倾斜大框。
-max_large_side_tilt: 4.0
-max_large_top_tilt: 1.5
-max_large_single_side_tilt: 5.0
-max_small_top_tilt: 3.0
-max_small_side_tilt: 8.0
-max_small_single_side_tilt: 10.0
+# 斜框否决（平衡版）：只拒绝明显倾斜的框，轻微倾斜保留，避免漏检过多。
+# 大装甲板：顶边 >5°、左右边平均 >8°、任一边 >13° 时丢弃；
+# 小装甲板：顶边 >12°、平均 >16°、任一边 >18° 时丢弃。
+# 原则仍是“宁可漏检不可错检”，但只牺牲极端斜框。
+max_large_side_tilt: 8.0
+max_large_top_tilt: 5.0
+max_large_single_side_tilt: 13.0
+max_small_top_tilt: 12.0
+max_small_side_tilt: 16.0
+max_small_single_side_tilt: 18.0
 # 大装甲板即使本帧漏检，也在此帧数内继续抑制附近的小装甲板。
 large_memory_frames: 8
 # 0 = 任何大装甲板都可进入记忆；主要靠下面的“稳定 2 帧”过滤假大框。

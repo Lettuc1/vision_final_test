@@ -136,14 +136,15 @@ roslaunch ft_detector image_test.launch
      `wide_large_aspect_min`，默认 4.55）要求 `min_number_score_wide_large`
      （默认 0.08），不把这个硬门槛用于远处小目标（否则会误删 `blue_guard`
      的真目标）。
-   - **斜框硬否决**：大装甲板顶边倾角超过 `max_large_top_tilt`
-     （默认 1.5°）、左右边平均倾角超过 `max_large_side_tilt`（默认 4.0°），
-     或任意一条边超过 `max_large_single_side_tilt`（默认 5.0°）时直接丢弃；
-     小装甲板对应阈值为 `max_small_top_tilt`（3.0°）、
-     `max_small_side_tilt`（8.0°）、`max_small_single_side_tilt`（10.0°）。
-     这是专门处理 red_1&3 中“大装甲板从右侧转过来时出现的倾斜大框”，
-     以及左侧侧灯条形成的小斜框。宁可漏掉一个很斜的真实装甲板，也不发布
-     斜框；如果实车确实需要保留大角度倾斜靶，再单独放宽这些参数。
+   - **斜框否决（平衡版）**：只否决**明显倾斜**的框，轻微倾斜保留，避免
+     把真实偏航/横滚的装甲板全部漏掉。
+     大装甲板：顶边倾角 > `max_large_top_tilt`（默认 5.0°）、左右边平均
+     倾角 > `max_large_side_tilt`（默认 8.0°），或任意一条边 >
+     `max_large_single_side_tilt`（默认 13.0°）时丢弃；小装甲板对应
+     `max_small_top_tilt`（12.0°）、`max_small_side_tilt`（16.0°）、
+     `max_small_single_side_tilt`（18.0°）。
+     原则仍是“宁可漏检不可错检”，但只牺牲极端斜框；这些阈值可以直接在
+     rqt_reconfigure 里按实车效果微调。
    - 大装甲板优先：大装甲板稳定出现 `large_memory_min_hits`（默认 4）次后，
      丢弃其左右 `large_dominance_factor`（默认 0.8）倍大装甲板宽度内的小
      装甲板，避免左侧车的侧灯条/前灯条再被凑成小框；`large_memory_frames`

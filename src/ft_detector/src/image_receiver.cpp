@@ -174,12 +174,12 @@ struct Params {
     double number_score_weight = 0.1;
     double ratio_score_weight = 1.8;
     double large_dominance_factor = 0.8;        // suppress local small plates
-    double max_large_side_tilt = 4.0; // reject visibly slanted large boxes
-    double max_large_top_tilt = 1.5;  // top edge must be nearly level
-    double max_large_single_side_tilt = 5.0;
-    double max_small_top_tilt = 3.0;
-    double max_small_side_tilt = 8.0;
-    double max_small_single_side_tilt = 10.0;
+    double max_large_side_tilt = 8.0; // reject clearly slanted large boxes
+    double max_large_top_tilt = 5.0;  // loose; strict height already limits top mismatch
+    double max_large_single_side_tilt = 13.0;
+    double max_small_top_tilt = 12.0;
+    double max_small_side_tilt = 16.0;
+    double max_small_single_side_tilt = 18.0;
     int    large_memory_frames = 8;             // keep large memory this long
     double large_memory_min_number_score = 0.0; // 0 = every selected large plate
     int    large_memory_min_hits = 4;           // require stable large before suppression
