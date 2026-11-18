@@ -1,0 +1,7 @@
+<launch>
+    <param name="/use_sim_time" value="true" />
+
+    <node pkg="ft_tracker" type="tracker_node" name="tracker_node" output="screen">
+        <rosparam file="$(find ft_tracker)/config/tracker_params.yaml" command="load" />
+    </node>
+</launch>
