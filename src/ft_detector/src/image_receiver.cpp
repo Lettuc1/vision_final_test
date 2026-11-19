@@ -86,6 +86,10 @@ struct Params {
 
     // camera fallback (only used if the bag has no camera_info)
     std::string camera_frame_fallback  = "camera_optical_frame";
+    // Some bags (e.g. red_4) put a non-TF frame name such as hk_camera_ca in
+    // camera_info.  The detector can use a TF-valid optical frame instead so
+    // RViz can resolve camera -> armor_i.  Empty = follow camera_info.
+    std::string camera_frame_override  = "camera_optical_frame";
     double      fallback_fx            = 1000.0;
     double      fallback_fy            = 1000.0;
     double      fallback_cx            = 720.0;
@@ -231,6 +235,8 @@ Params loadParams(ros::NodeHandle& pnh) {
 
     p.camera_frame_fallback =
         readParam<std::string>(pnh, "camera_frame_fallback", p.camera_frame_fallback);
+    p.camera_frame_override =
+        readParam<std::string>(pnh, "camera_frame_override", p.camera_frame_override);
     p.fallback_fx = readParam<double>(pnh, "fallback_fx", p.fallback_fx);
     p.fallback_fy = readParam<double>(pnh, "fallback_fy", p.fallback_fy);
     p.fallback_cx = readParam<double>(pnh, "fallback_cx", p.fallback_cx);
@@ -1847,6 +1853,14 @@ private:
             K.at<double>(0, 2) *= sx;
             K.at<double>(1, 1) *= sy;
             K.at<double>(1, 2) *= sy;
+        }
+
+        // red_4's camera_info frame is "hk_camera_ca", which is not present in
+        // the bag TF tree.  The optical frame is the calibrated camera frame
+        // that RViz can resolve.  Keep camera_info as the fallback when the
+        // override is empty.
+        if (!p.camera_frame_override.empty()) {
+            camera_frame = p.camera_frame_override;
         }
 
         std_msgs::Header header = msg->header;

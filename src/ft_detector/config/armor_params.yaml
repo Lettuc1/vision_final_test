@@ -27,6 +27,10 @@ publish_tf: true
 # 首选 camera_info。只有在整段 Bag 没有 camera_info，或者第一帧 camera_info
 # 还没到达时，才使用下面的兜底内参。
 camera_frame_fallback: camera_optical_frame
+# red_4.bag 的 camera_info frame_id 是 hk_camera_ca，TF 树里没有这个 frame，
+# 直接用会导致 armor_i / marker 在 RViz 里无法变换。默认统一到相机光学系；
+# 如果你确实要严格使用 camera_info 的 frame，把这里设为空字符串。
+camera_frame_override: camera_optical_frame
 fallback_fx: 1000.0
 fallback_fy: 1000.0
 fallback_cx: 720.0

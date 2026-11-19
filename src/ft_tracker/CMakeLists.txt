@@ -9,6 +9,7 @@ find_package(catkin REQUIRED COMPONENTS
   message_generation
   roscpp
   std_msgs
+  visualization_msgs
 )
 find_package(OpenCV REQUIRED)
 
@@ -22,6 +23,7 @@ catkin_package(
     message_runtime
     roscpp
     std_msgs
+    visualization_msgs
 )
 
 include_directories(

@@ -1,7 +1,7 @@
-# ft_tracker：单目标匀速平移跟踪
+# ft_tracker：单目标匀速平移跟踪 + 提前量
 
-本包对应考核基础部分第 6 项的前半部分：**单目标平移跟踪**。  
-本版本**暂不发布提前量 `position_predict`**，先把滤波、锁定、丢检预测和轨迹删除跑通；提前量下一步再加。
+本包对应考核基础部分第 6 项：**单目标平移跟踪 + 提前量**。
+已完成滤波、锁定、丢检预测、轨迹删除，以及 `position_predict` 和 RViz marker。
 
 ## 输入输出
 
@@ -18,13 +18,17 @@ uint32 id
 bool tracking
 geometry_msgs/Point position
 geometry_msgs/Vector3 velocity
+geometry_msgs/Point position_predict
+float64 lead_time
 ```
 
 - `header.stamp` 直接使用输入检测帧的时间戳，不使用 `ros::Time::now()`；
 - `header.frame_id` 使用输入检测帧的相机 frame；
 - `position` 是相机系下的滤波位置，单位米；
 - `velocity` 是相机系下的滤波速度，单位 m/s；
-- `tracking=true` 表示当前帧有观测命中；`tracking=false` 表示纯预测。
+- `tracking=true` 表示当前帧有观测命中；`tracking=false` 表示纯预测；
+- `position_predict = position + velocity * lead_time`，单位米；
+- `lead_time` 来自 YAML，默认 0.1 s。
 
 ## 滤波模型
 
@@ -56,6 +60,30 @@ Qvv = dt^2   * q_accel^2
 
 观测噪声 `R = r_position * I`。
 
+参数取值理由：
+
+- `q_accel = 4.0 m/s²`：按机器人短时间内可出现的最大加速度量级取，
+  让滤波器在目标变速时还能跟上；
+- `r_position = 0.0025 m²`：约等于 PnP 位置标准差 5 cm；
+- `gate_distance = 0.5 m`：PDF 建议先给 0.3~0.5 m；100 Hz 数据下目标一帧
+  位移很小，0.5 m 主要给深度/角点噪声留余量，同时避免一开始就锁错板；
+- `max_innovation = 0.5 m`：第一版单帧 innovation 上限。严格调到 0.2 m 时，
+  `red_4_with_detection` 的 tracking 比例会降到 70% 左右并频繁重捕获，
+  所以当前和 gate 保持一致，优先保证轨迹维持；如果实车检测框很稳，可以
+  下调到 0.2~0.3 m 抑制跳变。
+
+提前量按匀速模型外推：
+
+```text
+position_predict = position + velocity * lead_time
+```
+
+同时向 `/ft/debug/marker` 发布：
+
+- 绿色球：当前位置；
+- 橙色球：提前量后的预测位置；
+- 黄色箭头：当前位置 → 预测位置，方便在 RViz 里看出“往前一截”。
+
 ## 锁定和丢检
 
 1. 没有轨迹时，选当前帧中 `confidence` 最高的检测，初始化轨迹；
@@ -84,6 +112,8 @@ Qvv = dt^2   * q_accel^2
 | `initial_position_var` | 0.1 | 初始位置方差 |
 | `initial_velocity_var` | 1.0 | 初始速度方差 |
 | `min_dt` / `max_dt` | 0.001 / 0.5 s | dt 夹紧范围 |
+| `lead_time` | 0.1 s | 提前量 T |
+| `marker_topic` | `/ft/debug/marker` | 当前/预测位置 marker |
 
 ## 运行
 
@@ -114,13 +144,14 @@ rosbag play --clock -l /root/rosbags/red_4.bag
 
 ## 如何确认效果
 
-因为当前还没有提前量 marker，先用“话题 + 曲线 + 统计脚本”确认。
+现在可以直接看 `/ft/track` 的 `position_predict` 和 `/ft/debug/marker`。
 
 ### 1. 看话题有没有连续输出
 
 ```bash
 rostopic hz /ft/track
 rostopic echo -n 1 /ft/track
+rostopic echo -n 1 /ft/debug/marker
 ```
 
 重点看：
@@ -128,7 +159,8 @@ rostopic echo -n 1 /ft/track
 - `header.stamp` 是否等于对应检测帧的图像时间戳；
 - `tracking` 是否在正常情况下为 `true`；
 - `id` 是否只在长时间丢检后变化；
-- 位置单位是否约为米，速度是否约为 m/s。
+- `position_predict` 是否约等于 `position + velocity * lead_time`；
+- marker 的 frame/stamp 是否与检测一致，绿色当前位置、橙色预测位置和黄色箭头是否可见。
 
 ### 2. 看位置/速度曲线
 
@@ -158,6 +190,8 @@ rosbag play --clock -r 1 /root/rosbags/red_4_with_detection.bag
 - 轨迹 ID 列表和 ID 切换次数；
 - 最长纯预测时长（应不超过 `max_lost_time`）；
 - 位置步进速度、滤波速度的 p50/p95/max；
+- `position_predict` 与 `position + velocity * lead_time` 的最大误差；
+- marker 消息数量；
 - NaN/Inf 数量。
 
 建议的判据：
@@ -166,7 +200,8 @@ rosbag play --clock -r 1 /root/rosbags/red_4_with_detection.bag
 - 最长纯预测不超过 `0.5 s`；
 - `non-finite samples = 0`；
 - ID 切换只发生在长时间丢检后，不应逐帧跳；
-- 速度和位置步进不应出现明显不符合实车运动的尖峰。
+- 速度和位置步进不应出现明显不符合实车运动的尖峰；
+- 提前量误差应接近 0。
 
 也可以把结果导出：
 
@@ -185,18 +220,46 @@ python3 tools/check_track.py --duration 25 --csv /tmp/track.csv
 
 注意：如果直接把检测节点停掉，`/ft/track` 没有新的输入帧，跟踪节点不会自己产生新消息；应使用带空检测帧的 Bag 来验证。
 
+### 5. RViz 看 marker
+
+```bash
+rviz
+```
+
+- Fixed Frame 设为相机 frame（如 `camera_optical_frame`）；
+- 添加 Marker 显示，话题 `/ft/debug/marker`；
+- 绿色球是滤波后的当前位置，橙色球是提前量后的预测位置；
+- Bag 回放时两个球应随目标移动，预测球在运动方向前方一小段。
+
 ## 当前验证结果
 
-用 `red_4_with_detection.bag` 验证：
+用 `red_4_with_detection.bag` 验证（约 20 s）：
 
-- `/ft/track` 有连续输出；
-- 绝大部分帧 `tracking=true`；
-- 检测短暂丢失时继续输出 `tracking=false` 的预测位置；
-- 超过 0.5 s 丢失后轨迹删除，再捕获时分配新 `id`；
-- 输出位置/速度没有 NaN。
+```text
+track messages       : 2470
+tracking true/false  : 2281 / 189 (92.3% true)
+track ids            : [1, 2, 3, 4]
+id switches          : 3（均发生在长时间丢检后）
+max lost duration    : 0.495 s
+lead prediction error: max=0.000000 m
+marker messages      : 7410（每个轨迹帧 3 个 marker）
+non-finite samples   : 0
+```
+
+同时观察到：
+
+```text
+position step speed  : p95=6.21, max=29.05 m/s
+filter velocity      : p95=3.44, max=11.40 m/s
+```
+
+这不是滤波器自身发散。`red_4_with_detection` 里同一帧经常同时给出两块板
+（深度约 3.8 m 和 5 m 附近），且帧内 ID 按左右重排；目标在两块板之间切换时
+会产生较大的位置步进。严格限制 innovation 会明显降低轨迹维持率，所以当前
+优先保证“不频繁重捕获”；下一步可以通过外观尺寸/板号一致性再做关联，而不是
+单纯收紧 Q/R。
 
 ## 下一步
 
-1. 增加提前量 `T`（YAML，默认 0.1 s），发布 `position_predict`；
-2. 发布 `/ft/debug/marker`，在 RViz 中画出当前位置和预测位置；
-3. 再做 `ft_bringup` 单条 launch 和演示视频。
+1. 录 2~3 分钟演示视频，覆盖一条 launch、TF、`/ft/debug/image`、预测 marker 和动态调参；
+2. 进阶部分再考虑神经网络和旋转模型。

@@ -1,9 +1,10 @@
 # =============================================================================
 # 单目标匀速平移跟踪参数
 #
-# 本节点只做基础部分的“跟踪 + 滤波”，暂不发布提前量 position_predict。
+# 基础部分的“跟踪 + 滤波 + 提前量”。
 # 状态：[x, y, z, vx, vy, vz]（相机系，米 / m/s）
 # 观测：[x, y, z]
+# 提前量：position_predict = position + velocity * lead_time
 # =============================================================================
 
 detection_topic: /ft/detection
@@ -13,6 +14,11 @@ queue_size: 50
 # 数据关联门限：预测位置与检测位置的三维欧氏距离（米）。
 # 先给 0.5 m；目标速度大或帧率低时再收紧/放宽。
 gate_distance: 0.5
+
+# 单帧 innovation 上限（米）：即使检测落在 gate 内，如果相对预测位置
+# 突然跳了超过这个距离，也当作异常观测，不更新滤波器，继续预测。
+# 100 Hz 数据下目标一帧位移远小于 0.2 m；被剔除后若持续 >0.5 s 会新起轨迹。
+max_innovation: 0.5
 
 # 连续丢失超过该时间（秒）删除轨迹，重新捕获时分配新 id。
 max_lost_time: 0.5
@@ -32,3 +38,9 @@ initial_velocity_var: 1.0
 # dt 夹紧范围，避免回放暂停/时间跳变把滤波器推飞。
 min_dt: 0.001
 max_dt: 0.5
+
+# 提前量 T（秒）。position_predict = position + velocity * T。
+lead_time: 0.1
+
+# 当前位置 + 预测位置的 RViz marker
+marker_topic: /ft/debug/marker

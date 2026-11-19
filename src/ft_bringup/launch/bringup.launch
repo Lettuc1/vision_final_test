@@ -1,0 +1,18 @@
+<launch>
+    <!-- One command for detection + tracking + RViz + online tuning.
+         Use: roslaunch ft_bringup bringup.launch
+         Optional: rviz:=false rqt:=false for a headless test. -->
+
+    <arg name="rviz" default="true" />
+    <arg name="rqt" default="true" />
+
+    <include file="$(find ft_detector)/launch/detect.launch" />
+    <include file="$(find ft_tracker)/launch/track.launch" />
+
+    <node if="$(arg rviz)" pkg="rviz" type="rviz" name="rviz"
+          args="-d $(find ft_bringup)/rviz/bringup.rviz"
+          output="screen" />
+
+    <node if="$(arg rqt)" pkg="rqt_reconfigure" type="rqt_reconfigure"
+          name="rqt_reconfigure" output="screen" />
+</launch>

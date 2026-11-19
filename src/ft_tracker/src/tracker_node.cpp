@@ -1,5 +1,5 @@
 // =============================================================================
-// Single-target constant-velocity tracker (base part 6, no lead yet).
+// Single-target constant-velocity tracker with lead prediction (base part 6).
 //
 // Input : /ft/detection  (ft_detection/DetectionFrame)
 // Output: /ft/track      (ft_tracker/Track)
@@ -16,6 +16,7 @@
 #include <ros/ros.h>
 #include <ft_detection/DetectionFrame.h>
 #include <ft_tracker/Track.h>
+#include <visualization_msgs/Marker.h>
 
 #include <opencv2/core.hpp>
 #include <opencv2/video/tracking.hpp>
@@ -34,6 +35,7 @@ struct Params {
     int queue_size = 50;
 
     double gate_distance = 0.5;       // metres
+    double max_innovation = 0.5;      // metres; same as gate, kept as explicit outlier limit
     double max_lost_time = 0.5;       // seconds
     double q_accel = 4.0;             // m/s^2 acceleration spectral density
     double r_position = 0.0025;       // m^2 (5 cm std)
@@ -41,6 +43,10 @@ struct Params {
     double initial_velocity_var = 1.0;
     double min_dt = 0.001;
     double max_dt = 0.5;
+
+    // Lead: position_predict = position + velocity * lead_time.
+    double lead_time = 0.1;           // seconds
+    std::string marker_topic = "/ft/debug/marker";
 };
 
 class TrackerNode {
@@ -50,10 +56,13 @@ public:
         sub_ = nh_.subscribe(p_.detection_topic, p_.queue_size,
                              &TrackerNode::detectionCallback, this);
         pub_ = nh_.advertise<ft_tracker::Track>(p_.track_topic, p_.queue_size);
+        marker_pub_ = nh_.advertise<visualization_msgs::Marker>(
+            p_.marker_topic, 10);
         ROS_INFO_STREAM("ft_tracker: listening " << p_.detection_topic
                         << " -> publishing " << p_.track_topic
                         << ", gate=" << p_.gate_distance
-                        << " m, max_lost=" << p_.max_lost_time << " s");
+                        << " m, max_lost=" << p_.max_lost_time
+                        << " s, lead=" << p_.lead_time << " s");
     }
 
 private:
@@ -62,6 +71,7 @@ private:
         pnh_.param<std::string>("track_topic", p_.track_topic, p_.track_topic);
         pnh_.param<int>("queue_size", p_.queue_size, p_.queue_size);
         pnh_.param<double>("gate_distance", p_.gate_distance, p_.gate_distance);
+        pnh_.param<double>("max_innovation", p_.max_innovation, p_.max_innovation);
         pnh_.param<double>("max_lost_time", p_.max_lost_time, p_.max_lost_time);
         pnh_.param<double>("q_accel", p_.q_accel, p_.q_accel);
         pnh_.param<double>("r_position", p_.r_position, p_.r_position);
@@ -69,10 +79,14 @@ private:
         pnh_.param<double>("initial_velocity_var", p_.initial_velocity_var, p_.initial_velocity_var);
         pnh_.param<double>("min_dt", p_.min_dt, p_.min_dt);
         pnh_.param<double>("max_dt", p_.max_dt, p_.max_dt);
+        pnh_.param<double>("lead_time", p_.lead_time, p_.lead_time);
+        pnh_.param<std::string>("marker_topic", p_.marker_topic, p_.marker_topic);
 
         if (p_.queue_size < 1) p_.queue_size = 1;
+        if (p_.lead_time < 0.0) p_.lead_time = 0.0;
         if (p_.max_lost_time <= 0.0) p_.max_lost_time = 0.5;
         if (p_.gate_distance <= 0.0) p_.gate_distance = 0.5;
+        if (p_.max_innovation <= 0.0) p_.max_innovation = 0.2;
     }
 
     // Highest-confidence detection becomes the lock target on acquisition.
@@ -185,6 +199,54 @@ private:
         publish(stamp, frame_id, true, true);
     }
 
+    void publishMarker(const std::string& frame_id, const ros::Time& stamp,
+                       double x, double y, double z,
+                       double px, double py, double pz) {
+        visualization_msgs::Marker m;
+        m.header.stamp = stamp;
+        m.header.frame_id = frame_id;
+        m.ns = "ft_tracker";
+        m.type = visualization_msgs::Marker::SPHERE;
+        m.action = visualization_msgs::Marker::ADD;
+        m.pose.orientation.w = 1.0;
+        m.lifetime = ros::Duration(0.2);
+
+        // Current filtered position.
+        m.id = 0;
+        m.pose.position.x = x;
+        m.pose.position.y = y;
+        m.pose.position.z = z;
+        m.scale.x = m.scale.y = m.scale.z = 0.07;
+        m.color.r = 0.1f; m.color.g = 1.0f; m.color.b = 0.1f; m.color.a = 1.0f;
+        marker_pub_.publish(m);
+
+        // Position after lead_time.
+        m.id = 1;
+        m.pose.position.x = px;
+        m.pose.position.y = py;
+        m.pose.position.z = pz;
+        m.scale.x = m.scale.y = m.scale.z = 0.07;
+        m.color.r = 1.0f; m.color.g = 0.3f; m.color.b = 0.1f; m.color.a = 1.0f;
+        marker_pub_.publish(m);
+
+        // Arrow from the current position to the predicted position, so the
+        // lead is visible even when the two spheres overlap.
+        m.id = 2;
+        m.type = visualization_msgs::Marker::ARROW;
+        m.points.clear();
+        geometry_msgs::Point current;
+        current.x = x; current.y = y; current.z = z;
+        geometry_msgs::Point predicted;
+        predicted.x = px; predicted.y = py; predicted.z = pz;
+        m.points.push_back(current);
+        m.points.push_back(predicted);
+        m.scale.x = 0.02;
+        m.scale.y = 0.05;
+        m.scale.z = 0.06;
+        m.color.r = 1.0f; m.color.g = 0.9f; m.color.b = 0.1f; m.color.a = 1.0f;
+        marker_pub_.publish(m);
+    }
+
     void publish(const ros::Time& stamp, const std::string& frame_id,
                  bool tracking, bool use_post) {
         if (!has_track_ || !kf_ready_) return;
@@ -206,6 +268,16 @@ private:
             return;
         }
 
+        const double px = x + vx * p_.lead_time;
+        const double py = y + vy * p_.lead_time;
+        const double pz = z + vz * p_.lead_time;
+        if (!std::isfinite(px) || !std::isfinite(py) || !std::isfinite(pz)) {
+            ROS_WARN("ft_tracker: non-finite lead prediction, dropping track");
+            has_track_ = false;
+            kf_ready_ = false;
+            return;
+        }
+
         ft_tracker::Track out;
         out.header.stamp = stamp;
         out.header.frame_id = frame_id;
@@ -217,7 +289,12 @@ private:
         out.velocity.x = vx;
         out.velocity.y = vy;
         out.velocity.z = vz;
+        out.position_predict.x = px;
+        out.position_predict.y = py;
+        out.position_predict.z = pz;
+        out.lead_time = p_.lead_time;
         pub_.publish(out);
+        publishMarker(frame_id, stamp, x, y, z, px, py, pz);
     }
 
     void detectionCallback(const ft_detection::DetectionFrame::ConstPtr& msg) {
@@ -271,7 +348,8 @@ private:
                 const double dy = pos.y - py;
                 const double dz = pos.z - pz;
                 const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
-                if (d <= p_.gate_distance && d < best_dist) {
+                if (d <= p_.gate_distance && d <= p_.max_innovation &&
+                    d < best_dist) {
                     best_dist = d;
                     best = static_cast<int>(i);
                 }
@@ -311,6 +389,7 @@ private:
     ros::NodeHandle pnh_;
     ros::Subscriber sub_;
     ros::Publisher pub_;
+    ros::Publisher marker_pub_;
 
     Params p_;
     cv::KalmanFilter kf_;

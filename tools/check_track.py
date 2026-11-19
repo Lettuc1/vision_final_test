@@ -21,6 +21,7 @@ import time
 import rospy
 from ft_detection.msg import DetectionFrame
 from ft_tracker.msg import Track
+from visualization_msgs.msg import Marker
 
 
 def percentile(values, q):
@@ -42,6 +43,7 @@ def main():
 
     tracks = []
     det_frames = [0]
+    marker_count = [0]
     start_wall = time.time()
 
     def track_cb(msg):
@@ -51,15 +53,22 @@ def main():
             'tracking': bool(msg.tracking),
             'p': (msg.position.x, msg.position.y, msg.position.z),
             'v': (msg.velocity.x, msg.velocity.y, msg.velocity.z),
+            'pp': (msg.position_predict.x, msg.position_predict.y,
+                   msg.position_predict.z),
+            'lead': float(msg.lead_time),
         })
 
     def detection_cb(_msg):
         det_frames[0] += 1
 
+    def marker_cb(_msg):
+        marker_count[0] += 1
+
     rospy.init_node('check_track', anonymous=True)
     rospy.Subscriber(args.track_topic, Track, track_cb, queue_size=200)
     rospy.Subscriber(args.detection_topic, DetectionFrame,
                      detection_cb, queue_size=200)
+    rospy.Subscriber('/ft/debug/marker', Marker, marker_cb, queue_size=200)
 
     print('recording... Ctrl-C to finish')
     try:
@@ -104,12 +113,15 @@ def main():
 
     # Position/velocity sanity.
     nan_count = 0
+    lead_errors = []
     speeds = []
     steps = []
     for i, r in enumerate(tracks):
-        vals = list(r['p']) + list(r['v'])
+        vals = list(r['p']) + list(r['v']) + list(r['pp'])
         if any(not math.isfinite(x) for x in vals):
             nan_count += 1
+        expected = tuple(a + b * r['lead'] for a, b in zip(r['p'], r['v']))
+        lead_errors.append(math.sqrt(sum((a - b) ** 2 for a, b in zip(r['pp'], expected))))
         speeds.append(math.sqrt(sum(x * x for x in r['v'])))
         if i > 0 and tracks[i - 1]['id'] == r['id']:
             dt = r['t'] - tracks[i - 1]['t']
@@ -132,12 +144,16 @@ def main():
           (percentile(steps, 0.50), percentile(steps, 0.95), max(steps or [0.0])))
     print('filter velocity      : p50=%.2f p95=%.2f max=%.2f m/s' %
           (percentile(speeds, 0.50), percentile(speeds, 0.95), max(speeds or [0.0])))
+    print('lead time             : %.3f s' % (tracks[0]['lead'] if tracks else 0.0))
+    print('lead prediction error: max=%.6f m (should be ~0)' % max(lead_errors or [0.0]))
+    print('marker messages      : %d' % marker_count[0])
     print('non-finite samples   : %d' % nan_count)
 
     print('\ncheck points:')
     print('- true ratio should be high (>~90%%) while the bag has detections')
     print('- max lost duration should be <= max_lost_time (0.5 s)')
     print('- id switches should happen only after a long lost run, not every frame')
+    print('- lead prediction should equal position + velocity * lead_time')
     print('- non-finite samples must be 0')
     print('- step/filter speed should be physically plausible for your target')
 

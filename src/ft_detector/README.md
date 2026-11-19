@@ -44,6 +44,18 @@ roslaunch ft_detector image_test.launch
 `header.frame_id` 优先使用最新 `camera_info` 的 `frame_id`；如果整段数据没有
 `camera_info`，才使用图像 header 或 YAML 中的兜底值。
 
+**red_4.bag 的特殊情况**：它的 `camera_info.header.frame_id` 是
+`hk_camera_ca`，这个 frame 在 Bag 的 TF 树里不存在（TF 里实际有
+`camera_optical_frame`）。如果直接拿 `hk_camera_ca` 当 TF 父系，RViz 会出现
+`No transform from [armor_0]`。因此 YAML 默认：
+
+```yaml
+camera_frame_override: camera_optical_frame
+```
+
+它只覆盖 `header.frame_id` / TF 父系，不改变相机内参。若某段数据确实要严格
+使用 `camera_info` 的 frame，把该项设为空字符串即可。
+
 ## 检测定义和坐标系
 
 采用考核中的**定义一**：四个点是两根灯条的四个端点。
@@ -152,6 +164,33 @@ roslaunch ft_detector image_test.launch
    - 短时闪现由 `temporal_confirm_frames`（默认 3 帧）过滤：一个目标必须
      在连续/近邻帧里稳定出现才会发布；`temporal_max_misses` 默认 8，允许
      远处目标短暂漏帧后继续累计。
+
+## RViz 中查看 TF 坐标轴和 tracker marker
+
+1. 启动检测 + 跟踪：
+
+```bash
+roslaunch ft_detector detect.launch
+roslaunch ft_tracker track.launch
+rosbag play --clock -l /root/rosbags/red_4.bag
+```
+
+2. RViz 的 `Fixed Frame` 设为 **`camera_optical_frame`**，不要用
+   `hk_camera_ca`（它不在 TF 树里）。`red_4` 也可以设为 `base_link`，
+   因为它有 `base_link -> ... -> camera_optical_frame` 的 TF 链。
+
+3. TF 显示：
+   - Add → TF；
+   - 展开 TF，勾选 `Show Names` 和 `Show Axes`；
+   - 应能看到 `armor_0` / `armor_1` 的坐标轴。
+
+4. Marker 显示：
+   - Add → Marker；
+   - Topic 选 `/ft/debug/marker`，不是 `/ft/tracker/0`；
+   - 绿色球是当前位置，橙色球是预测位置。
+
+如果 RViz 仍然报 `No transform from [hk_camera...]`，先确认 `camera_frame_override`
+是否被改成了空字符串，或者 Fixed Frame 是否还停在 `hk_camera_ca`。
 
 ## 参数和动态调参
 

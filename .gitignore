@@ -10,3 +10,7 @@ logs/
 
 # 忽略 IDE 的配置
 .vscode/
+
+# Python cache
+__pycache__/
+*.pyc

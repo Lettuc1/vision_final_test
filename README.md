@@ -1,16 +1,23 @@
 # 视觉组最终考核
 
-本仓库当前已完成**传统视觉装甲板检测节点**（`src/ft_detector`）和**单目标匀速平移跟踪节点**（`src/ft_tracker`，暂不含提前量）。
+本仓库当前已完成**传统视觉装甲板检测节点**（`src/ft_detector`）和**单目标匀速平移跟踪节点**（`src/ft_tracker`，含提前量和 RViz marker）。
 
 ```bash
 cd ~/vision_final_test
 catkin_make
 source devel/setup.bash
 
-# 终端 1：启动检测节点
-roslaunch ft_detector detect.launch
+# 一条命令启动检测 + 跟踪 + RViz + rqt_reconfigure
+roslaunch ft_bringup bringup.launch
 
-# 终端 2：回放 Bag
+# 另一终端回放 Bag
+rosbag play --clock -l /root/rosbags/red_4.bag
+```
+
+无显示器测试：
+
+```bash
+roslaunch ft_bringup bringup.launch rviz:=false rqt:=false
 rosbag play --clock -l /root/rosbags/red_4.bag
 ```
 
@@ -23,17 +30,20 @@ roslaunch ft_detector image_test.launch
 该 launch 会同时启动检测节点、`rqt_image_view`（查看 `/ft/debug/image`）和
 `rqt_reconfigure`（在线调 HSV、最小面积、配对阈值等）。
 
-跟踪节点单独启动：
+单独调试跟踪节点时：
 
 ```bash
 roslaunch ft_tracker track.launch
 rosbag play --clock -l /root/rosbags/red_4_with_detection.bag
 ```
 
-`/ft/track` 当前包含 `header`、`id`、`tracking`、`position`、`velocity`；提前量
-`position_predict` 和 `/ft/debug/marker` 留到下一步。
+`/ft/track` 包含 `header`、`id`、`tracking`、`position`、`velocity`、
+`position_predict`、`lead_time`；`/ft/debug/marker` 发布当前位置和预测位置。
 
-详细说明见 [src/ft_detector/README.md](src/ft_detector/README.md) 和
+RViz 里 `Fixed Frame` 用 `camera_optical_frame`，TF 显示勾选 `Show Axes`；Marker 话题是 `/ft/debug/marker`。`red_4` 的 `camera_info` 里是 `hk_camera_ca`，代码已通过 `camera_frame_override` 统一到 `camera_optical_frame`。
+
+详细说明见 [src/ft_bringup/README.md](src/ft_bringup/README.md)、
+[src/ft_detector/README.md](src/ft_detector/README.md) 和
 [src/ft_tracker/README.md](src/ft_tracker/README.md)，包括：
 
 - 话题、消息和 TF；
@@ -42,7 +52,7 @@ rosbag play --clock -l /root/rosbags/red_4_with_detection.bag
 - YAML 参数、动态调参和调参顺序；
 - 已知限制。
 
-跟踪部分已完成单目标平移模型（`src/ft_tracker`）；提前量、旋转模型和 `/ft/target`
+跟踪部分已完成单目标平移模型 + 提前量（`src/ft_tracker`）；旋转模型和 `/ft/target`
 属于后续内容，尚未完成。
 
 ## 跟踪效果检查
