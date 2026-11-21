@@ -1,8 +1,21 @@
 Panels:
   - Class: rviz/Displays
+    Help Height: 70
     Name: Displays
+    Property Tree Widget:
+      Expanded:
+        - /Tracker Marker1
+      Splitter Ratio: 0.5
+    Tree Height: 511
   - Class: rviz/Views
+    Expanded:
+      - /Current View1
     Name: Views
+    Splitter Ratio: 0.5
+Preferences:
+  PromptSaveOnExit: true
+Toolbars:
+  toolButtonStyle: 2
 Visualization Manager:
   Class: ""
   Displays:
@@ -12,7 +25,7 @@ Visualization Manager:
       Color: 160; 160; 164
       Enabled: true
       Line Style:
-        Line Width: 0.03
+        Line Width: 0.029999999329447746
         Value: Lines
       Name: Grid
       Normal Cell Count: 0
@@ -26,34 +39,122 @@ Visualization Manager:
       Value: true
     - Class: rviz/TF
       Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
       Frame Timeout: 5
+      Frames:
+        All Enabled: true
+        armor_0:
+          Value: true
+        armor_1:
+          Value: true
+        base_link:
+          Value: true
+        base_pitch:
+          Value: true
+        base_yaw:
+          Value: true
+        camera2_optical_frame:
+          Value: true
+        camera_link:
+          Value: true
+        camera_optical_frame:
+          Value: true
+        gimbal_imu:
+          Value: true
+        left_back_pivot:
+          Value: true
+        left_back_wheel:
+          Value: true
+        left_friction_wheel:
+          Value: true
+        left_front_pivot:
+          Value: true
+        left_front_wheel:
+          Value: true
+        odom:
+          Value: true
+        pitch:
+          Value: true
+        right_back_pivot:
+          Value: true
+        right_back_wheel:
+          Value: true
+        right_friction_wheel:
+          Value: true
+        right_front_pivot:
+          Value: true
+        right_front_wheel:
+          Value: true
+        supply_frame:
+          Value: true
+        trigger:
+          Value: true
+        wireless_frame:
+          Value: true
+        yaw:
+          Value: true
+      Marker Alpha: 1
       Marker Scale: 1
       Name: TF
       Show Arrows: false
       Show Axes: true
       Show Names: true
+      Tree:
+        armor_1:
+          {}
+        base_pitch:
+          {}
+        base_yaw:
+          {}
+        odom:
+          base_link:
+            left_back_pivot:
+              left_back_wheel:
+                {}
+            left_front_pivot:
+              left_front_wheel:
+                {}
+            right_back_pivot:
+              right_back_wheel:
+                {}
+            right_front_pivot:
+              right_front_wheel:
+                {}
+            trigger:
+              {}
+            yaw:
+              pitch:
+                camera2_optical_frame:
+                  {}
+                camera_link:
+                  {}
+                camera_optical_frame:
+                  armor_0:
+                    {}
+                gimbal_imu:
+                  {}
+                left_friction_wheel:
+                  {}
+                right_friction_wheel:
+                  {}
+              supply_frame:
+                {}
+              wireless_frame:
+                {}
       Update Interval: 0
       Value: true
     - Class: rviz/Marker
       Enabled: true
+      Marker Topic: /ft/debug/marker
       Name: Tracker Marker
       Namespaces:
         ft_tracker: true
-      Topic:
-        Depth: 5
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /ft/debug/marker
+      Queue Size: 100
       Value: true
     - Class: rviz/Image
       Enabled: true
-      Image Topic:
-        Depth: 1
-        Durability Policy: Volatile
-        History Policy: Keep Last
-        Reliability Policy: Reliable
-        Value: /ft/debug/image
+      Image Topic: /ft/debug/image
       Max Value: 1
       Median window: 5
       Min Value: 0
@@ -61,55 +162,64 @@ Visualization Manager:
       Normalize Range: true
       Queue Size: 2
       Transport Hint: raw
+      Unreliable: false
       Value: true
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
+    Default Light: true
     Fixed Frame: camera_optical_frame
     Frame Rate: 30
   Name: root
   Tools:
     - Class: rviz/Interact
+      Hide Inactive Objects: true
     - Class: rviz/MoveCamera
     - Class: rviz/Select
     - Class: rviz/FocusCamera
     - Class: rviz/Measure
     - Class: rviz/SetInitialPose
-      Topic:
-        Value: /initialpose
+      Theta std deviation: 0.2617993950843811
+      Topic: /initialpose
+      X std deviation: 0.5
+      Y std deviation: 0.5
     - Class: rviz/SetGoal
-      Topic:
-        Value: /move_base_simple/goal
+      Topic: /move_base_simple/goal
   Value: true
   Views:
     Current:
       Class: rviz/Orbit
-      Distance: 10
+      Distance: 4.730898857116699
       Enable Stereo Rendering:
-        Stereo Eye Separation: 0.06
+        Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
+      Field of View: 0.7853981852531433
       Focal Point:
         X: 0
         Y: 0
         Z: 2
       Focal Shape Fixed Size: true
-      Focal Shape Size: 0.05
+      Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
-      Near Clip Distance: 0.01
-      Pitch: 0.35
+      Near Clip Distance: 0.009999999776482582
+      Pitch: -1.3452035188674927
       Target Frame: <Fixed Frame>
-      Value: Orbit (rviz)
-      Yaw: 0.6
+      Yaw: 4.750013828277588
     Saved: ~
 Window Geometry:
+  Debug Image:
+    collapsed: false
   Displays:
     collapsed: false
-  Height: 900
+  Height: 1531
   Hide Left Dock: false
   Hide Right Dock: false
-  Width: 1400
-  X: 50
-  Y: 50
+  QMainWindow State: 000000ff00000000fd000000010000000000000156000005a5fc0200000003fb000000160044006500620075006700200049006d006100670065010000003b0000017e0000001600fffffffb000000100044006900730070006c00610079007301000001bf00000280000000c700fffffffb0000000a0056006900650077007301000004450000019b000000a000ffffff00000861000005a500000004000000040000000800000008fc0000000100000002000000010000000a0054006f006f006c00730100000000ffffffff0000000000000000
+  Views:
+    collapsed: false
+  Width: 2493
+  X: 67
+  Y: 32

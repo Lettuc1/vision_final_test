@@ -80,9 +80,12 @@ position_predict = position + velocity * lead_time
 
 同时向 `/ft/debug/marker` 发布：
 
-- 绿色球：当前位置；
+- 绿色球：当前位置（滤波后的装甲板中心）；
 - 橙色球：提前量后的预测位置；
 - 黄色箭头：当前位置 → 预测位置，方便在 RViz 里看出“往前一截”。
+
+marker 生命周期设为 0（不自动过期），这样 `rosbag play` 暂停后还能截图；
+轨迹超过 `max_lost_time` 删除时会主动发送 DELETE，把旧 marker 清掉。
 
 ## 锁定和丢检
 

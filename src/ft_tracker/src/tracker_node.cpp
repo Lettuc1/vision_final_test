@@ -209,14 +209,17 @@ private:
         m.type = visualization_msgs::Marker::SPHERE;
         m.action = visualization_msgs::Marker::ADD;
         m.pose.orientation.w = 1.0;
-        m.lifetime = ros::Duration(0.2);
+        // Keep the last marker visible when the bag is paused for a
+        // screenshot.  Markers are explicitly deleted when the track is
+        // deleted after max_lost_time.
+        m.lifetime = ros::Duration(0.0);
 
         // Current filtered position.
         m.id = 0;
         m.pose.position.x = x;
         m.pose.position.y = y;
         m.pose.position.z = z;
-        m.scale.x = m.scale.y = m.scale.z = 0.07;
+        m.scale.x = m.scale.y = m.scale.z = 0.10;
         m.color.r = 0.1f; m.color.g = 1.0f; m.color.b = 0.1f; m.color.a = 1.0f;
         marker_pub_.publish(m);
 
@@ -225,7 +228,7 @@ private:
         m.pose.position.x = px;
         m.pose.position.y = py;
         m.pose.position.z = pz;
-        m.scale.x = m.scale.y = m.scale.z = 0.07;
+        m.scale.x = m.scale.y = m.scale.z = 0.10;
         m.color.r = 1.0f; m.color.g = 0.3f; m.color.b = 0.1f; m.color.a = 1.0f;
         marker_pub_.publish(m);
 
@@ -240,11 +243,23 @@ private:
         predicted.x = px; predicted.y = py; predicted.z = pz;
         m.points.push_back(current);
         m.points.push_back(predicted);
-        m.scale.x = 0.02;
-        m.scale.y = 0.05;
-        m.scale.z = 0.06;
+        m.scale.x = 0.03;
+        m.scale.y = 0.07;
+        m.scale.z = 0.08;
         m.color.r = 1.0f; m.color.g = 0.9f; m.color.b = 0.1f; m.color.a = 1.0f;
         marker_pub_.publish(m);
+    }
+
+    void clearMarkers(const std::string& frame_id, const ros::Time& stamp) {
+        visualization_msgs::Marker m;
+        m.header.stamp = stamp;
+        m.header.frame_id = frame_id;
+        m.ns = "ft_tracker";
+        m.action = visualization_msgs::Marker::DELETE;
+        for (int id = 0; id <= 2; ++id) {
+            m.id = id;
+            marker_pub_.publish(m);
+        }
     }
 
     void publish(const ros::Time& stamp, const std::string& frame_id,
@@ -265,6 +280,7 @@ private:
             ROS_WARN("ft_tracker: non-finite state, dropping track");
             has_track_ = false;
             kf_ready_ = false;
+            clearMarkers(frame_id, stamp);
             return;
         }
 
@@ -275,6 +291,7 @@ private:
             ROS_WARN("ft_tracker: non-finite lead prediction, dropping track");
             has_track_ = false;
             kf_ready_ = false;
+            clearMarkers(frame_id, stamp);
             return;
         }
 
@@ -312,6 +329,7 @@ private:
                             << " s, deleted");
             has_track_ = false;
             kf_ready_ = false;
+            clearMarkers(msg->header.frame_id, stamp);
         }
 
         bool predicted = false;

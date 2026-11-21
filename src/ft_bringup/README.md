@@ -51,6 +51,14 @@ rostopic echo -n 1 /ft/debug/marker
   - 橙色球：提前量后的预测位置；
   - 黄色箭头：当前位置 → 预测位置。
 
+RViz 的 Marker 显示里字段是 **`Marker Topic`**，必须是
+`/ft/debug/marker`。如果显示成 `visualization_marker`，说明 RViz 订阅了
+默认话题，会看到 `Status: Ok` 但没有任何球。新版 `bringup.rviz` 已修正，
+旧 RViz 需要重启或手动改这个字段。
+
+如果 Bag 暂停后 marker 消失，说明还在跑旧版 tracker；当前版本 marker
+不再自动过期，轨迹删除时会主动 DELETE。
+
 ## 动态调参
 
 `rqt_reconfigure` 打开后选择 `image_receiver_node`，可以实时修改：
